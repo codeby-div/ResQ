@@ -49,6 +49,8 @@ export default function PatientPortal() {
     return Object.keys(errs).length === 0
   }
 
+  const [showSuccess, setShowSuccess] = useState(false)
+
   const handleSubmit = async () => {
     if (!validate() || lat === null || lng === null) return
     try {
@@ -56,6 +58,7 @@ export default function PatientPortal() {
       const created = await createEmergency(data)
       setSubmitted(created.id)
       setName(""); setDesc(""); setSeverity("medium")
+      setShowSuccess(true)
       load()
     } catch { /* ignore */ }
   }
@@ -73,11 +76,23 @@ export default function PatientPortal() {
         <span className="text-caption text-tertiary dark:text-tertiary-dark">Patient</span>
       </header>
 
-      <div className="p-4 space-y-4">
-        {submitted !== null && (
-          <div className="card-ok text-caption text-status-green flex items-center gap-2">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12" /></svg>
-            Emergency #{submitted} submitted — tracking below
+      <div className="p-4 space-y-4">{showSuccess && (
+          <div className="fixed inset-0 bg-[#0F1117]/90 flex items-center justify-center z-50 p-6">
+            <div className="bg-[#1A1D27] rounded-xl border border-[#22263A] p-8 max-w-sm w-full text-center space-y-4">
+              <div className="w-14 h-14 rounded-full bg-green-900/30 border-2 border-green-700 flex items-center justify-center mx-auto">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2D7A45" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>
+              </div>
+              <h2 className="text-[17px] font-medium text-[#F0F1F3]">Record submitted successfully!</h2>
+              <p className="text-[13px] text-[#5C6278]">Your emergency #{submitted} has been received. Help is on the way.</p>
+              <button onClick={() => { setShowSuccess(false); setTab("track") }}
+                className="w-full py-2.5 rounded-lg bg-[#C0392B] text-white text-[13px] font-medium hover:opacity-85 transition-opacity">
+                Track Status
+              </button>
+              <button onClick={() => setShowSuccess(false)}
+                className="w-full py-2 rounded-lg border border-[#22263A] text-[13px] text-[#5C6278] hover:text-[#F0F1F3] transition-colors">
+                Report Another
+              </button>
+            </div>
           </div>
         )}
 
