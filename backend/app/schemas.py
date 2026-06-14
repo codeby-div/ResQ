@@ -110,3 +110,15 @@ class SummaryResponse(BaseModel):
     resolved: int
     critical: int
     high: int
+
+
+class TrackingResponse(BaseModel):
+    ambulance_lat: Optional[float] = None
+    ambulance_lng: Optional[float] = None
+    ambulance_vehicle_id: Optional[str] = None
+    status: str
+    eta_seconds: Optional[int] = None
+    progress_pct: float = 0
+    route: list[dict] = []
+    emergency_lat: float
+    emergency_lng: float

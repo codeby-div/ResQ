@@ -1,7 +1,10 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { useNavigate } from "react-router-dom"
-import { createEmergency, fetchEmergencies } from "../services/api"
-import type { Emergency, EmergencyFormData } from "../types"
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet"
+import L from "leaflet"
+import "leaflet/dist/leaflet.css"
+import { createEmergency, fetchEmergencies, fetchTracking } from "../services/api"
+import type { Emergency, EmergencyFormData, TrackingInfo } from "../types"
 
 const severities = [
   { value: "critical", label: "Critical", dot: "bg-status-red" },
@@ -12,10 +15,71 @@ const severities = [
 
 type Tab = "report" | "track"
 
+const patientIcon = L.divIcon({
+  html: '<div style="background:#C0392B;color:#fff;border-radius:50%;width:32px;height:32px;display:flex;align-items:center;justify-content:center;font-size:16px;border:3px solid #fff;box-shadow:0 2px 10px rgba(0,0,0,.3)">!</div>',
+  className: "", iconSize: [32, 32], iconAnchor: [16, 16],
+})
+
+const ambulanceIcon = L.divIcon({
+  html: '<div style="background:#2D7A45;color:#fff;border-radius:8px;width:30px;height:30px;display:flex;align-items:center;justify-content:center;font-size:14px;border:3px solid #fff;box-shadow:0 2px 10px rgba(0,0,0,.3)">🚑</div>',
+  className: "", iconSize: [30, 30], iconAnchor: [15, 15],
+})
+
+function MapUpdater({ tracking }: { tracking: TrackingInfo | null }) {
+  const map = useMap()
+  useEffect(() => {
+    if (tracking && tracking.ambulance_lat && tracking.ambulance_lng) {
+      const bounds = L.latLngBounds(
+        [tracking.emergency_lat, tracking.emergency_lng],
+        [tracking.ambulance_lat, tracking.ambulance_lng]
+      )
+      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 })
+    }
+  }, [tracking, map])
+  return null
+}
+
+function formatEta(seconds: number | null) {
+  if (seconds === null || seconds === undefined) return "--"
+  if (seconds <= 0) return "Arrived"
+  const m = Math.floor(seconds / 60)
+  const s = Math.floor(seconds % 60)
+  return `${m}:${s.toString().padStart(2, "0")}`
+}
+
+function TrackMap({ tracking }: { tracking: TrackingInfo | null }) {
+  if (!tracking) return null
+  const routePositions: [number, number][] = tracking.route.map(p => [p.lat, p.lng])
+
+  return (
+    <div className="rounded-xl overflow-hidden border border-border dark:border-border-dark" style={{ height: 280 }}>
+      <MapContainer center={[tracking.emergency_lat, tracking.emergency_lng]} zoom={13} className="h-full w-full" zoomControl={false}>
+        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <MapUpdater tracking={tracking} />
+
+        <Marker position={[tracking.emergency_lat, tracking.emergency_lng]} icon={patientIcon}>
+          <Popup>Your location</Popup>
+        </Marker>
+
+        {tracking.ambulance_lat && tracking.ambulance_lng && (
+          <Marker position={[tracking.ambulance_lat, tracking.ambulance_lng]} icon={ambulanceIcon}>
+            <Popup>{tracking.ambulance_vehicle_id || "Ambulance"}</Popup>
+          </Marker>
+        )}
+
+        {routePositions.length > 1 && (
+          <Polyline positions={routePositions} color="#2D7A45" weight={3} opacity={0.6} dashArray="8 4" />
+        )}
+      </MapContainer>
+    </div>
+  )
+}
+
 export default function PatientPortal() {
   const navigate = useNavigate()
   const [tab, setTab] = useState<Tab>("report")
   const [emergencies, setEmergencies] = useState<Emergency[]>([])
+  const [tracking, setTracking] = useState<TrackingInfo | null>(null)
   const [name, setName] = useState("")
   const [desc, setDesc] = useState("")
   const [severity, setSeverity] = useState<EmergencyFormData["severity"]>("medium")
@@ -23,12 +87,24 @@ export default function PatientPortal() {
   const [lng, setLng] = useState<number | null>(null)
   const [submitted, setSubmitted] = useState<number | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [showSuccess, setShowSuccess] = useState(false)
 
   const load = useCallback(async () => {
     try { setEmergencies(await fetchEmergencies()) } catch { /* ignore */ }
   }, [])
 
   useEffect(() => { load(); const i = setInterval(load, 8000); return () => clearInterval(i) }, [load])
+
+  // Poll tracking when viewing track tab with a submitted emergency
+  useEffect(() => {
+    if (tab !== "track" || !submitted) { setTracking(null); return }
+    const poll = async () => {
+      try { setTracking(await fetchTracking(submitted!)) } catch { /* ignore */ }
+    }
+    poll()
+    const i = setInterval(poll, 3000)
+    return () => clearInterval(i)
+  }, [tab, submitted])
 
   const getLocation = () => {
     if (!navigator.geolocation) return
@@ -49,8 +125,6 @@ export default function PatientPortal() {
     return Object.keys(errs).length === 0
   }
 
-  const [showSuccess, setShowSuccess] = useState(false)
-
   const handleSubmit = async () => {
     if (!validate() || lat === null || lng === null) return
     try {
@@ -65,6 +139,12 @@ export default function PatientPortal() {
 
   const myEmergencies = submitted ? emergencies.filter(e => e.id === submitted) : []
 
+  const statusSteps = [
+    { key: "pending", label: "Report Received", done: tracking && tracking.status !== "pending" },
+    { key: "dispatched", label: "Ambulance Dispatched", done: tracking && (tracking.status === "dispatched" || tracking.status === "resolved") },
+    { key: "resolved", label: "Arrived / Resolved", done: tracking && tracking.status === "resolved" },
+  ]
+
   return (
     <div className="min-h-screen bg-page dark:bg-[#0F1117] pb-20">
       <header className="sticky top-0 z-10 bg-white dark:bg-surface-dark border-b border-border dark:border-border-dark px-4 h-[52px] flex items-center justify-between">
@@ -76,7 +156,8 @@ export default function PatientPortal() {
         <span className="text-caption text-tertiary dark:text-tertiary-dark">Patient</span>
       </header>
 
-      <div className="p-4 space-y-4">{showSuccess && (
+      <div className="p-4 space-y-4">
+        {showSuccess && (
           <div className="fixed inset-0 bg-[#0F1117]/90 flex items-center justify-center z-50 p-6">
             <div className="bg-[#1A1D27] rounded-xl border border-[#22263A] p-8 max-w-sm w-full text-center space-y-4">
               <div className="w-14 h-14 rounded-full bg-green-900/30 border-2 border-green-700 flex items-center justify-center mx-auto">
@@ -146,35 +227,93 @@ export default function PatientPortal() {
             </button>
           </div>
         ) : (
-          <div className="card space-y-3">
-            <h1 className="text-page-title text-primary dark:text-primary-dark">Track Status</h1>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h1 className="text-page-title text-primary dark:text-primary-dark">Track Status</h1>
+              {tracking && tracking.status === "dispatched" && (
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-status-green animate-pulse-ring" />
+                  <span className="text-[13px] font-medium tabular-nums text-status-green">{formatEta(tracking.eta_seconds)}</span>
+                </div>
+              )}
+            </div>
+
             {myEmergencies.length === 0 ? (
-              <div className="py-8 text-center">
+              <div className="card py-8 text-center">
                 <p className="text-caption text-tertiary dark:text-tertiary-dark">No emergencies yet</p>
-                <p className="text-metric-label text-secondary dark:text-secondary-dark mt-1">Submit a report above to track it here</p>
+                <p className="text-caption text-secondary dark:text-secondary-dark mt-1">Submit a report above to track it here</p>
               </div>
             ) : (
-              myEmergencies.map(e => (
-                <div key={e.id} className="border border-border dark:border-border-dark rounded-card p-4">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="text-body font-medium text-primary dark:text-primary-dark">{e.patient_name}</p>
-                      <p className="text-caption text-tertiary dark:text-tertiary-dark mt-1">{e.description}</p>
+              <>
+                {/* Live Map */}
+                {tracking && (tracking.status === "dispatched" || tracking.status === "resolved") && (
+                  <TrackMap tracking={tracking} />
+                )}
+
+                {/* Status Timeline */}
+                <div className="card space-y-4">
+                  <h2 className="text-[15px] font-medium text-primary dark:text-primary-dark">Status</h2>
+
+                  {tracking && tracking.status === "dispatched" && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1 bg-surface2 dark:bg-surface2-dark rounded-full h-2 overflow-hidden">
+                          <div className="h-full rounded-full bg-status-green transition-all duration-500" style={{ width: `${tracking.progress_pct}%` }} />
+                        </div>
+                        <span className="text-caption tabular-nums text-secondary dark:text-secondary-dark w-10 text-right">{tracking.progress_pct}%</span>
+                      </div>
+                      <p className="text-caption text-tertiary dark:text-tertiary-dark">
+                        {tracking.ambulance_vehicle_id || "Ambulance"} is on the way
+                      </p>
                     </div>
-                    <span className={`micro-tag ${
-                      e.severity === "critical" ? "micro-tag-critical" :
-                      e.severity === "high" ? "micro-tag-warning" : "micro-tag-ok"
-                    }`}>{e.severity}</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-3">
-                    <span className={`w-1.5 h-1.5 rounded-full ${
-                      e.status === "resolved" ? "bg-status-green" :
-                      e.status === "dispatched" ? "bg-hospital" : "bg-status-amber"
-                    }`} />
-                    <span className="text-caption text-secondary dark:text-secondary-dark capitalize">{e.status}</span>
+                  )}
+
+                  {/* Vertical timeline steps */}
+                  <div className="space-y-0">
+                    {statusSteps.map((step, i) => (
+                      <div key={step.key} className="flex gap-3">
+                        <div className="flex flex-col items-center w-5">
+                          <div className={`w-3 h-3 rounded-full border-2 mt-0.5 ${
+                            step.done
+                              ? "bg-status-green border-status-green"
+                              : step.key === tracking?.status
+                              ? "bg-status-amber border-status-amber animate-pulse-ring"
+                              : "bg-surface2 dark:bg-surface2-dark border-border dark:border-border-dark"
+                          }`} />
+                          {i < statusSteps.length - 1 && (
+                            <div className={`w-0.5 flex-1 min-h-[24px] ${
+                              step.done ? "bg-status-green" : "bg-border dark:bg-border-dark"
+                            }`} />
+                          )}
+                        </div>
+                        <div className="pb-6">
+                          <p className={`text-[13px] ${
+                            step.done ? "text-primary dark:text-primary-dark font-medium" :
+                            step.key === tracking?.status ? "text-primary dark:text-primary-dark" :
+                            "text-tertiary dark:text-tertiary-dark"
+                          }`}>{step.label}</p>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              ))
+
+                {/* Emergency info card */}
+                {myEmergencies.map(e => (
+                  <div key={e.id} className="card">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="text-body font-medium text-primary dark:text-primary-dark">{e.patient_name}</p>
+                        <p className="text-caption text-tertiary dark:text-tertiary-dark mt-1">{e.description}</p>
+                      </div>
+                      <span className={`micro-tag ${
+                        e.severity === "critical" ? "micro-tag-critical" :
+                        e.severity === "high" ? "micro-tag-warning" : "micro-tag-ok"
+                      }`}>{e.severity}</span>
+                    </div>
+                  </div>
+                ))}
+              </>
             )}
           </div>
         )}

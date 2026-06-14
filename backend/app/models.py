@@ -80,6 +80,6 @@ class Emergency(Base):
     latitude = Column(Float, nullable=False)
     longitude = Column(Float, nullable=False)
     status = Column(SAEnum(EmergencyStatus), default=EmergencyStatus.PENDING)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     assigned_ambulance_id = Column(Integer, ForeignKey("ambulances.id"), nullable=True)
     assigned_hospital_id = Column(Integer, ForeignKey("hospitals.id"), nullable=True)

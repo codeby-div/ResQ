@@ -1,11 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from datetime import datetime, timezone
+from math import radians, cos, sin, asin, sqrt
+
 from ..database import get_db
-from ..models import Emergency, EmergencySeverity, EmergencyStatus
+from ..models import Emergency, EmergencySeverity, EmergencyStatus, Ambulance
 from ..schemas import (
     EmergencyCreate, EmergencyResponse, EmergencyUpdate,
-    RecommendationResponse,
+    RecommendationResponse, TrackingResponse,
 )
 from ..ml.severity import predict_severity
 from ..ml.recommender import (
@@ -108,6 +111,60 @@ def assign_resources(
     db.commit()
     db.refresh(emergency)
     return emergency
+
+
+@router.get("/{emergency_id}/tracking", response_model=TrackingResponse)
+def track_emergency(emergency_id: int, db: Session = Depends(get_db)):
+    emergency = db.query(Emergency).filter(Emergency.id == emergency_id).first()
+    if not emergency:
+        raise HTTPException(status_code=404, detail="Emergency not found")
+
+    resp = TrackingResponse(
+        status=emergency.status.value,
+        emergency_lat=emergency.latitude,
+        emergency_lng=emergency.longitude,
+    )
+
+    if emergency.status == EmergencyStatus.PENDING:
+        return resp
+
+    if emergency.assigned_ambulance_id and emergency.status == EmergencyStatus.DISPATCHED:
+        amb = db.query(Ambulance).filter(Ambulance.id == emergency.assigned_ambulance_id).first()
+        if amb:
+            resp.ambulance_vehicle_id = amb.vehicle_id
+            # Simulate movement along straight line from ambulance origin → emergency
+            total_trip = 600  # assume 10 min trip
+            # Use a pseudo-random but deterministic seed from emergency/ambulance IDs
+            # so progress looks realistic in demo
+            import hashlib
+            seed_str = f"{emergency.id}-{amb.id}"
+            hash_val = int(hashlib.md5(seed_str.encode()).hexdigest(), 16)
+            progress = (hash_val % 60 + 5) / 100  # 5% to 64%
+            resp.progress_pct = round(progress * 100, 1)
+            remaining = total_trip * (1 - progress)
+            resp.eta_seconds = int(remaining)
+
+            # Interpolate position
+            lat = emergency.latitude + (amb.latitude - emergency.latitude) * (1 - progress)
+            lng = emergency.longitude + (amb.longitude - emergency.longitude) * (1 - progress)
+            resp.ambulance_lat = round(lat, 6)
+            resp.ambulance_lng = round(lng, 6)
+
+            # Route polyline (a few intermediate points)
+            steps = 10
+            resp.route = [
+                {
+                    "lat": round(amb.latitude + (emergency.latitude - amb.latitude) * i / steps, 6),
+                    "lng": round(amb.longitude + (emergency.longitude - amb.longitude) * i / steps, 6),
+                }
+                for i in range(steps + 1)
+            ]
+
+    if emergency.status == EmergencyStatus.RESOLVED:
+        resp.progress_pct = 100
+        resp.eta_seconds = 0
+
+    return resp
 
 
 @router.get("/analytics/hotspots")

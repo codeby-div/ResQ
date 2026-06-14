@@ -75,3 +75,15 @@ export interface Summary {
   critical: number
   high: number
 }
+
+export interface TrackingInfo {
+  ambulance_lat: number | null
+  ambulance_lng: number | null
+  ambulance_vehicle_id: string | null
+  status: "pending" | "dispatched" | "resolved"
+  eta_seconds: number | null
+  progress_pct: number
+  route: { lat: number; lng: number }[]
+  emergency_lat: number
+  emergency_lng: number
+}

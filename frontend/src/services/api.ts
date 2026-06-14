@@ -1,5 +1,5 @@
 import axios from "axios"
-import type { Hospital, Ambulance, Emergency, Recommendation, EmergencyFormData, Hotspot, Summary } from "../types"
+import type { Hospital, Ambulance, Emergency, Recommendation, EmergencyFormData, Hotspot, Summary, TrackingInfo } from "../types"
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || "http://localhost:8000",
@@ -65,5 +65,10 @@ export async function fetchAmbulanceEmergencies(id: number): Promise<Emergency[]
 
 export async function fetchHospitalEmergencies(id: number): Promise<Emergency[]> {
   const { data } = await api.get(`/hospitals/${id}/emergencies`)
+  return data
+}
+
+export async function fetchTracking(id: number): Promise<TrackingInfo> {
+  const { data } = await api.get(`/emergencies/${id}/tracking`)
   return data
 }
