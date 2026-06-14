@@ -1,0 +1,518 @@
+import { useState, useEffect, useCallback } from "react"
+import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet"
+import L from "leaflet"
+import "leaflet/dist/leaflet.css"
+import { fetchHospitals, fetchAmbulances, fetchEmergencies, updateEmergency } from "../services/api"
+import { demoHospitals, demoAmbulances } from "../services/demoData"
+import type { Hospital, Ambulance, Emergency } from "../types"
+import AlertItem from "../components/ui/AlertItem"
+import ConfirmationModal from "../components/ui/ConfirmationModal"
+
+type View = "overview" | "livemap" | "emergencies" | "hospitals" | "ambulances" | "staff" | "forecast" | "hotspots" | "reports" | "users" | "settings"
+
+const nav: { label: string; items: { key: View; label: string; count?: number }[] }[] = [
+  { label: "Monitor", items: [
+    { key: "overview", label: "Overview" },
+    { key: "livemap", label: "Live map" },
+    { key: "emergencies", label: "Emergencies", count: 3 },
+  ]},
+  { label: "Resources", items: [
+    { key: "hospitals", label: "Hospitals" },
+    { key: "ambulances", label: "Ambulances" },
+    { key: "staff", label: "Staff" },
+  ]},
+  { label: "Analytics", items: [
+    { key: "forecast", label: "Demand forecast" },
+    { key: "hotspots", label: "Hotspot map" },
+    { key: "reports", label: "Reports" },
+  ]},
+  { label: "System", items: [
+    { key: "users", label: "User management" },
+    { key: "settings", label: "Settings" },
+  ]},
+]
+
+const hospitalIcon = L.divIcon({
+  html: '<div style="background:#1D6FA8;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:16px;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.25)">+</div>',
+  className: "", iconSize: [28, 28], iconAnchor: [14, 14],
+})
+const ambulanceIcon = L.divIcon({
+  html: '<div style="background:#2D7A45;color:#fff;border-radius:6px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:12px;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.25)">🚑</div>',
+  className: "", iconSize: [26, 26], iconAnchor: [13, 13],
+})
+
+const relTime = (iso: string) => {
+  const d = Date.now() - new Date(iso).getTime(); const m = Math.floor(d / 60000)
+  if (m < 1) return "just now"; if (m < 60) return `${m}m ago`; return `${Math.floor(m / 60)}h ago`
+}
+
+const sparkline = (data: number[], color = "#6B6966") => {
+  if (data.length < 2) return null
+  const w = 80, h = 28, min = Math.min(...data), max = Math.max(...data), r = max - min || 1, sx = w / (data.length - 1)
+  const pts = data.map((v, i) => `${i * sx},${h - ((v - min) / r) * (h - 4) - 2}`).join(" ")
+  return <svg width={w} height={h} className="shrink-0"><polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" /></svg>
+}
+
+export default function AdminPortal() {
+  const [view, setView] = useState<View>("overview")
+  const [hospitals, setHospitals] = useState<Hospital[]>([])
+  const [ambulances, setAmbulances] = useState<Ambulance[]>([])
+  const [emergencies, setEmergencies] = useState<Emergency[]>([])
+  const [search, setSearch] = useState("")
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [reassignTarget, setReassignTarget] = useState<Emergency | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      const [h, a, e] = await Promise.all([fetchHospitals(), fetchAmbulances(), fetchEmergencies()])
+      setHospitals(h); setAmbulances(a); setEmergencies(e)
+    } catch { setHospitals(demoHospitals); setAmbulances(demoAmbulances) }
+  }, [])
+
+  useEffect(() => { load(); const i = setInterval(load, 8000); return () => clearInterval(i) }, [load])
+
+  const filtered = emergencies.filter(e => e.patient_name.toLowerCase().includes(search.toLowerCase()))
+  const pending = emergencies.filter(e => e.status === "pending").length
+  const critical = emergencies.filter(e => e.severity === "critical").length
+  const availAmb = ambulances.filter(a => a.status === "available").length
+  const totalBeds = hospitals.reduce((s, h) => s + h.available_beds, 0)
+
+  const Sidebar = () => (
+    <aside className="w-[220px] bg-surface2 dark:bg-surface2-dark border-r border-border dark:border-border-dark flex flex-col shrink-0">
+      <nav className="flex-1 py-4 overflow-y-auto">
+        {nav.map(s => (
+          <div key={s.label} className="mb-5">
+            <p className="px-4 mb-2 text-section-label text-tertiary dark:text-tertiary-dark">{s.label}</p>
+            {s.items.map(item => (
+              <button key={item.key} onClick={() => { setView(item.key); setSidebarOpen(false) }}
+                className={`w-full flex items-center gap-3 px-4 py-2 text-body transition-colors duration-100 ${
+                  view === item.key
+                    ? "border-l-2 border-accent dark:border-primary-dark text-primary dark:text-primary-dark font-medium"
+                    : "border-l-2 border-transparent text-tertiary dark:text-tertiary-dark hover:bg-surface dark:hover:bg-surface-dark hover:text-primary dark:hover:text-primary-dark"
+                }`}>
+                <span className="flex-1 text-left">{item.label}</span>
+                {item.count ? <span className="text-caption text-tertiary">{item.count}</span> : null}
+              </button>
+            ))}
+          </div>
+        ))}
+      </nav>
+      <div className="p-4 border-t border-border dark:border-border-dark flex items-center gap-3">
+        <div className="w-7 h-7 rounded-full bg-surface2 dark:bg-surface2-dark flex items-center justify-center text-caption font-medium">AD</div>
+        <div className="flex-1 min-w-0">
+          <p className="text-caption font-medium text-primary dark:text-primary-dark truncate">Admin</p>
+          <p className="text-caption text-tertiary dark:text-tertiary-dark truncate">System Administrator</p>
+        </div>
+      </div>
+    </aside>
+  )
+
+  return (
+    <div className="h-screen flex flex-col bg-page dark:bg-[#0F1117]">
+      <header className="h-[52px] bg-white dark:bg-surface-dark border-b border-border dark:border-border-dark flex items-center justify-between px-4 shrink-0">
+        <div className="flex items-center gap-3">
+          <button onClick={() => setSidebarOpen(!sidebarOpen)} className="lg:hidden text-secondary dark:text-secondary-dark" aria-label="Toggle sidebar">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" /></svg>
+          </button>
+          <span className="text-[18px] font-medium text-status-red">+</span>
+          <span className="text-[15px] font-medium text-primary dark:text-primary-dark">ResQ</span>
+          <span className="hidden sm:block text-caption text-tertiary dark:text-tertiary-dark ml-2">/ Admin</span>
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="hidden md:flex items-center gap-2">
+            <span className="flex items-center gap-1 text-caption text-tertiary"><span className="w-1.5 h-1.5 rounded-full bg-status-red animate-pulse-ring" />{critical} critical</span>
+            <span className="flex items-center gap-1 text-caption text-tertiary"><span className="w-1.5 h-1.5 rounded-full bg-status-green" />{availAmb} avail</span>
+          </div>
+          <span className="text-caption text-tertiary">{new Date().toLocaleTimeString()}</span>
+        </div>
+      </header>
+
+      <div className="flex flex-1 overflow-hidden relative">
+        <div className={`${sidebarOpen ? "fixed inset-0 z-40 flex" : "hidden"} lg:flex lg:relative lg:z-0`}>
+          {sidebarOpen && <div className="absolute inset-0 bg-black/20 lg:hidden" onClick={() => setSidebarOpen(false)} />}
+          <Sidebar />
+        </div>
+
+        <main className="flex-1 overflow-y-auto p-6">
+          {view === "overview" && (
+            <OverviewView emergencies={emergencies} hospitals={hospitals} ambulances={ambulances} pending={pending} critical={critical} availAmb={availAmb} totalBeds={totalBeds} filtered={filtered} search={search} setSearch={setSearch} relTime={relTime} sparkline={sparkline} setReassignTarget={setReassignTarget} />
+          )}
+          {view === "livemap" && (
+            <LiveMapView hospitals={hospitals} ambulances={ambulances} emergencies={emergencies} />
+          )}
+          {view === "emergencies" && (
+            <EmergenciesView emergencies={emergencies} hospitals={hospitals} ambulances={ambulances} load={load} />
+          )}
+          {view === "hospitals" && (
+            <HospitalsView hospitals={hospitals} />
+          )}
+          {view === "ambulances" && (
+            <AmbulancesView ambulances={ambulances} />
+          )}
+          {view === "forecast" && (
+            <ForecastView emergencies={emergencies} />
+          )}
+          {view === "hotspots" && (
+            <HotspotsView />
+          )}
+          {view === "users" && (
+            <UsersView />
+          )}
+        </main>
+      </div>
+
+      {reassignTarget && (
+        <ConfirmationModal
+          title="Reassign Emergency"
+          description={`Reassign emergency #${reassignTarget.id} for ${reassignTarget.patient_name}?`}
+          onConfirm={() => { setReassignTarget(null); load() }}
+          onCancel={() => setReassignTarget(null)}
+          confirmLabel="Reassign"
+        />
+      )}
+    </div>
+  )
+}
+
+function OverviewView({ emergencies, hospitals, ambulances, pending, critical, availAmb, totalBeds, filtered, search, setSearch, relTime, sparkline, setReassignTarget }: any) {
+  const trend = [12, 14, 11, 15, 13, 17, pending]
+  return (
+    <div className="max-w-7xl mx-auto space-y-6">
+      <h1 className="text-page-title text-primary dark:text-primary-dark">Command Dashboard</h1>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className={`card ${critical > 0 ? "card-critical" : ""}`}>
+          <div className="flex items-center justify-between"><span className="text-section-label text-tertiary">Active emergencies</span>{sparkline(trend, "#C0392B")}</div>
+          <p className="text-metric-number tabular-nums text-primary mt-1">{emergencies.filter((e: Emergency) => e.status !== "resolved").length}</p>
+          <p className="text-caption text-secondary mt-1">{pending} pending dispatch</p>
+        </div>
+        <div className="card">
+          <div className="flex items-center justify-between"><span className="text-section-label text-tertiary">Beds available</span>{sparkline([45, 42, 38, 41, 39, 36, totalBeds], "#2D7A45")}</div>
+          <p className="text-metric-number tabular-nums text-primary mt-1">{totalBeds}</p>
+          <p className="text-caption text-secondary mt-1">City-wide total</p>
+        </div>
+        <div className={`card ${availAmb < 4 ? "card-warning" : "card-ok"}`}>
+          <div className="flex items-center justify-between"><span className="text-section-label text-tertiary">Ambulances free</span>{sparkline([8, 7, 5, 6, 4, 3, availAmb], availAmb < 4 ? "#B7660A" : "#2D7A45")}</div>
+          <p className="text-metric-number tabular-nums text-primary mt-1">{availAmb}</p>
+          <p className="text-caption text-secondary mt-1">of {ambulances.length} total</p>
+        </div>
+        <div className="card">
+          <div className="flex items-center justify-between"><span className="text-section-label text-tertiary">Avg response</span>{sparkline([9, 8, 10, 7, 8, 6, 7], "#2D7A45")}</div>
+          <p className="text-metric-number tabular-nums text-primary mt-1">7.2 min</p>
+          <p className="text-caption text-secondary mt-1">↓ 12% from yesterday</p>
+        </div>
+      </div>
+
+      <div className="grid lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-4">
+          <div className="card overflow-hidden">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-section-label text-tertiary">Active Emergencies</span>
+              <input value={search} onChange={e => setSearch(e.target.value)}
+                className="w-48 border border-border rounded px-3 py-1.5 text-caption bg-surface2 text-primary" placeholder="Search..." />
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-caption">
+                <thead><tr className="border-b border-border">
+                  <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">ID</th>
+                  <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Severity</th>
+                  <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Assigned</th>
+                  <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">ETA</th>
+                  <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Status</th>
+                  <th className="w-20 py-3"></th>
+                </tr></thead>
+                <tbody>
+                  {filtered.filter((e: Emergency) => e.status !== "resolved").slice(0, 6).map((e: Emergency) => (
+                    <tr key={e.id} className="border-b border-border hover:bg-surface2 transition-colors group">
+                      <td className="py-3 pr-3 text-primary">#{e.id}</td>
+                      <td className="py-3 pr-3"><span className="flex items-center gap-1.5"><span className={`w-1.5 h-1.5 rounded-full ${e.severity === "critical" ? "bg-status-red" : e.severity === "high" ? "bg-status-amber" : "bg-status-green"}`} /><span className="text-secondary">{e.severity}</span></span></td>
+                      <td className="py-3 pr-3 text-secondary">AMB-{e.assigned_ambulance_id || "—"}</td>
+                      <td className="py-3 pr-3 text-tertiary">{Math.floor(Math.random() * 10 + 3)} min</td>
+                      <td className="py-3 pr-3 text-secondary capitalize">{e.status}</td>
+                      <td className="py-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => setReassignTarget(e)} className="text-caption text-secondary hover:text-primary">Reassign</button>
+                      </td>
+                    </tr>
+                  ))}
+                  {filtered.filter((e: Emergency) => e.status !== "resolved").length === 0 && <tr><td colSpan={6} className="py-8 text-center text-caption text-tertiary">All clear</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <span className="text-section-label text-tertiary">Alerts Feed</span>
+          <div className="card p-0 divide-y divide-border max-h-[400px] overflow-y-auto">
+            {emergencies.slice(0, 5).map((e: Emergency) => (
+              <AlertItem key={e.id} severity={e.severity === "critical" ? "critical" : e.severity === "high" ? "warning" : "info"} message={`${e.patient_name} — ${e.severity}`} timestamp={relTime(e.created_at)} unread={e.status === "pending"} />
+            ))}
+            {emergencies.length === 0 && <div className="p-8 text-center text-caption text-tertiary">No active alerts</div>}
+          </div>
+
+          <div className="card">
+            <span className="text-section-label text-tertiary">Hospital Capacity</span>
+            <div className="mt-3 space-y-3">
+              {hospitals.slice(0, 4).map((h: Hospital) => {
+                const pct = h.total_beds > 0 ? Math.round((h.available_beds / h.total_beds) * 100) : 0
+                return (
+                  <div key={h.id}>
+                    <div className="flex justify-between text-caption mb-1">
+                      <span className="text-primary truncate">{h.name}</span>
+                      <span className="text-tertiary">{pct}%</span>
+                    </div>
+                    <div className="h-[2px] bg-border rounded-full"><div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: pct > 30 ? "#2D7A45" : pct > 10 ? "#B7660A" : "#C0392B" }} /></div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function LiveMapView({ hospitals, ambulances, emergencies }: any) {
+  const dispatched = emergencies.find((e: Emergency) => e.assigned_ambulance_id && e.status === "dispatched")
+  const amb = dispatched ? ambulances.find((a: Ambulance) => a.id === dispatched.assigned_ambulance_id) : null
+  return (
+    <div className="h-full flex">
+      <div className="flex-1 relative rounded-card overflow-hidden border border-border">
+        <MapContainer center={[20.5937, 78.9629]} zoom={5} className="h-full w-full" style={{ height: "100%", width: "100%" }}>
+          <TileLayer attribution='&copy; OpenStreetMap' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+          {hospitals.map((h: Hospital) => <Marker key={`h-${h.id}`} position={[h.latitude, h.longitude]} icon={hospitalIcon}><Popup><div className="text-sm"><strong>{h.name}</strong><br />Beds: {h.available_beds}/{h.total_beds}</div></Popup></Marker>)}
+          {ambulances.map((a: Ambulance) => <Marker key={`a-${a.id}`} position={[a.latitude, a.longitude]} icon={ambulanceIcon}><Popup><div className="text-sm"><strong>{a.vehicle_id}</strong><br />{a.status}</div></Popup></Marker>)}
+          {emergencies.filter((e: Emergency) => e.status !== "resolved").map((e: Emergency) => (
+            <Marker key={`e-${e.id}`} position={[e.latitude, e.longitude]}
+              icon={L.divIcon({
+                html: `<div style="background:#C0392B;color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:11px;border:2px solid #fff;box-shadow:0 0 0 ${e.severity === 'critical' ? '4px' : '0'} rgba(192,57,43,0.3)"${e.severity === 'critical' ? ' style="animation:pulse-ring 2s infinite"' : ''}>!</div>`,
+                className: "", iconSize: [22, 22], iconAnchor: [11, 11],
+              })}>
+              <Popup><div className="text-sm"><strong>{e.patient_name}</strong><br />{e.severity}<br />{e.status}</div></Popup>
+            </Marker>
+          ))}
+          {dispatched && amb && <Polyline positions={[[amb.latitude, amb.longitude], [dispatched.latitude, dispatched.longitude]]} pathOptions={{ color: "#3B82F6", dashArray: "6 3", weight: 1.5 }} />}
+        </MapContainer>
+      </div>
+      <div className="w-[200px] shrink-0 border-l border-border bg-white dark:bg-surface-dark p-4 space-y-4 overflow-y-auto">
+        <div><span className="text-section-label text-tertiary">Hospitals</span>
+          {hospitals.slice(0, 4).map((h: Hospital) => <div key={h.id} className="flex justify-between text-caption py-1"><span className="text-primary">{h.name}</span><span className="text-tertiary">{h.available_beds}b</span></div>)}
+        </div>
+        <div><span className="text-section-label text-tertiary">Ambulances</span>
+          {ambulances.slice(0, 4).map((a: Ambulance) => <div key={a.id} className="flex justify-between text-caption py-1"><span className="text-primary">{a.vehicle_id}</span><span className="text-tertiary">{a.status}</span></div>)}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function EmergenciesView({ emergencies: emergenciesList, load }: any) {
+  emergenciesList
+  const [s, setS] = useState(""); const [sev, setSev] = useState("all")
+  const f = emergenciesList.filter((e: Emergency) => (sev === "all" || e.severity === sev) && (e.patient_name.toLowerCase().includes(s.toLowerCase())))
+  return (
+    <div className="max-w-7xl mx-auto space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-page-title text-primary">Emergencies</h1>
+        <div className="flex gap-2">
+          <select value={sev} onChange={e => setSev(e.target.value)} className="border border-border rounded px-2 py-1 text-caption bg-surface2 text-primary">
+            {["all", "critical", "high", "medium", "low"].map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+          <input value={s} onChange={e => setS(e.target.value)} className="w-48 border border-border rounded px-3 py-1.5 text-caption bg-surface2 text-primary" placeholder="Search case ID or location..." />
+        </div>
+      </div>
+      <div className="card">
+        <div className="overflow-x-auto">
+          <table className="w-full text-caption">
+            <thead><tr className="border-b border-border">
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">ID</th>
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Patient</th>
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Severity</th>
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Location</th>
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Ambulance</th>
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Hospital</th>
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Status</th>
+              <th className="w-20 py-3"></th>
+            </tr></thead>
+            <tbody>
+              {f.map((e: Emergency) => (
+                <tr key={e.id} className="border-b border-border hover:bg-surface2 transition-colors group">
+                  <td className="py-3 pr-3 text-primary">#{e.id}</td>
+                  <td className="py-3 pr-3 text-primary">{e.patient_name}</td>
+                  <td className="py-3 pr-3"><span className="flex items-center gap-1.5"><span className={`w-1.5 h-1.5 rounded-full ${e.severity === "critical" ? "bg-status-red" : e.severity === "high" ? "bg-status-amber" : "bg-status-green"}`} /><span className="text-secondary">{e.severity}</span></span></td>
+                  <td className="py-3 pr-3 text-tertiary">{e.latitude.toFixed(2)}, {e.longitude.toFixed(2)}</td>
+                  <td className="py-3 pr-3 text-secondary">{e.assigned_ambulance_id ? `AMB-${e.assigned_ambulance_id}` : "—"}</td>
+                  <td className="py-3 pr-3 text-secondary">{e.assigned_hospital_id ? `H-${e.assigned_hospital_id}` : "—"}</td>
+                  <td className="py-3 pr-3 text-secondary capitalize">{e.status}</td>
+                  <td className="py-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onClick={async () => { await updateEmergency(e.id, { status: "resolved" } as any); load() }} className="text-caption text-secondary hover:text-primary">Resolve</button>
+                  </td>
+                </tr>
+              ))}
+              {f.length === 0 && <tr><td colSpan={8} className="py-8 text-center text-caption text-tertiary">No matches</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function HospitalsView({ hospitals }: any) {
+  return (
+    <div className="max-w-5xl mx-auto space-y-4">
+      <h1 className="text-page-title text-primary">Hospitals</h1>
+      <div className="card">
+        <div className="overflow-x-auto">
+          <table className="w-full text-caption">
+            <thead><tr className="border-b border-border">
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Name</th>
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Beds free</th>
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">ICU free</th>
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Status</th>
+              <th className="w-1/3 py-3"></th>
+            </tr></thead>
+            <tbody>
+              {hospitals.map((h: Hospital) => {
+                const pct = h.total_beds > 0 ? Math.round((h.available_beds / h.total_beds) * 100) : 0
+                return (
+                  <tr key={h.id} className="border-b border-border hover:bg-surface2 transition-colors">
+                    <td className="py-3 pr-3 text-primary">{h.name}</td>
+                    <td className="py-3 pr-3 text-secondary">{h.available_beds}/{h.total_beds}</td>
+                    <td className="py-3 pr-3 text-secondary">{h.available_icu}/{h.total_icu}</td>
+                    <td className="py-3 pr-3"><span className={`micro-tag ${h.status === "active" ? "micro-tag-ok" : h.status === "full" ? "micro-tag-critical" : "micro-tag-warning"}`}>{h.status}</span></td>
+                    <td className="py-3"><div className="h-[2px] bg-border rounded-full"><div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: pct > 30 ? "#2D7A45" : "#B7660A" }} /></div></td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AmbulancesView({ ambulances }: any) {
+  return (
+    <div className="max-w-5xl mx-auto space-y-4">
+      <h1 className="text-page-title text-primary">Ambulances</h1>
+      <div className="card">
+        <div className="overflow-x-auto">
+          <table className="w-full text-caption">
+            <thead><tr className="border-b border-border">
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Vehicle</th>
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Status</th>
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Location</th>
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Hospital</th>
+            </tr></thead>
+            <tbody>
+              {ambulances.map((a: Ambulance) => (
+                <tr key={a.id} className="border-b border-border hover:bg-surface2 transition-colors">
+                  <td className="py-3 pr-3 text-primary">{a.vehicle_id}</td>
+                  <td className="py-3 pr-3"><span className="flex items-center gap-1.5"><span className={`w-1.5 h-1.5 rounded-full ${a.status === "available" ? "bg-status-green" : a.status === "en_route" ? "bg-status-amber" : "bg-status-red"}`} /><span className="text-secondary">{a.status}</span></span></td>
+                  <td className="py-3 pr-3 text-tertiary">{a.latitude.toFixed(2)}, {a.longitude.toFixed(2)}</td>
+                  <td className="py-3 pr-3 text-secondary">{a.hospital_id ? `H-${a.hospital_id}` : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ForecastView(_: any) {
+  const hours = Array.from({ length: 24 }, (_, i) => i)
+  const actual = hours.map(() => Math.floor(Math.random() * 8 + 1))
+  const predicted = hours.map(() => Math.floor(Math.random() * 8 + 1))
+  const w = 600, h = 160, max = Math.max(...actual, ...predicted)
+  const sx = w / (hours.length - 1), sy = (v: number) => h - (v / max) * (h - 10) - 5
+  const peakHour = `${Math.floor(Math.random() * 12 + 8)}:00`
+  return (
+    <div className="max-w-5xl mx-auto space-y-4">
+      <h1 className="text-page-title text-primary">Demand Forecast</h1>
+      <div className="card space-y-4">
+        <div className="flex gap-6 text-caption">
+          <span className="flex items-center gap-2"><svg width="20" height="2" viewBox="0 0 20 2"><line x1="0" y1="1" x2="20" y2="1" stroke="#1A1917" strokeWidth="1.5" /></svg> Actual</span>
+          <span className="flex items-center gap-2"><svg width="20" height="2" viewBox="0 0 20 2"><line x1="0" y1="1" x2="20" y2="1" stroke="#1A1917" strokeWidth="1.5" strokeDasharray="4 2" /></svg> Predicted</span>
+        </div>
+        <svg viewBox={`0 0 ${w} ${h + 20}`} className="w-full h-48">
+          {[0, 0.25, 0.5, 0.75, 1].map(r => <line key={r} x1="0" y1={h * (1 - r)} x2={w} y2={h * (1 - r)} stroke="#E2E0DC" strokeWidth="1" opacity="0.1" />)}
+          <polyline points={actual.map((v, i) => `${i * sx},${sy(v)}`).join(" ")} fill="none" stroke="#1A1917" strokeWidth="1.5" />
+          <polyline points={predicted.map((v, i) => `${i * sx},${sy(v)}`).join(" ")} fill="none" stroke="#1A1917" strokeWidth="1.5" strokeDasharray="4 3" />
+        </svg>
+        <div className="grid grid-cols-3 gap-4 text-caption">
+          <div><span className="text-tertiary">Peak hour</span><p className="text-primary font-medium">{peakHour}</p></div>
+          <div><span className="text-tertiary">Busiest location</span><p className="text-primary font-medium">Downtown</p></div>
+          <div><span className="text-tertiary">Avg response</span><p className="text-primary font-medium">7.2 min</p></div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function HotspotsView() {
+  return (
+    <div className="max-w-5xl mx-auto space-y-4">
+      <h1 className="text-page-title text-primary">Hotspot Map</h1>
+      <div className="flex gap-2 mb-2">
+        {["Today", "7 days", "30 days"].map(t => <button key={t} className="px-3 py-1 border border-border rounded text-caption bg-surface2 text-primary">{t}</button>)}
+      </div>
+      <div className="card h-[400px] flex items-center justify-center text-caption text-tertiary">
+        <div className="text-center space-y-2">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mx-auto"><circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /></svg>
+          <p>Map overlay placeholder</p>
+          <p className="text-tertiary">Emergency density visualization</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function UsersView() {
+  const users = [
+    { name: "John Doe", role: "Ambulance operator", portal: "Ambulance", status: "Active", last: "2 min ago" },
+    { name: "Jane Smith", role: "Hospital staff", portal: "Hospital", status: "Active", last: "15 min ago" },
+    { name: "Admin User", role: "Admin", portal: "Admin", status: "Active", last: "just now" },
+    { name: "Patient One", role: "Patient", portal: "Patient", status: "Active", last: "1h ago" },
+  ]
+  return (
+    <div className="max-w-5xl mx-auto space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-page-title text-primary">User Management</h1>
+        <button className="px-3 py-1.5 rounded bg-accent dark:bg-primary-dark text-white dark:text-[#0F1117] text-caption hover:opacity-85">Add user</button>
+      </div>
+      <div className="card">
+        <div className="overflow-x-auto">
+          <table className="w-full text-caption">
+            <thead><tr className="border-b border-border">
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Name</th>
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Role</th>
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Portal</th>
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Status</th>
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Last active</th>
+              <th className="w-24 py-3"></th>
+            </tr></thead>
+            <tbody>
+              {users.map((u, i) => (
+                <tr key={i} className="border-b border-border hover:bg-surface2 transition-colors group">
+                  <td className="py-3 pr-3 text-primary">{u.name}</td>
+                  <td className="py-3 pr-3 text-secondary">{u.role}</td>
+                  <td className="py-3 pr-3 text-secondary">{u.portal}</td>
+                  <td className="py-3 pr-3"><span className="flex items-center gap-1.5"><span className={`w-1.5 h-1.5 rounded-full ${u.status === "Active" ? "bg-status-green" : "bg-status-red"}`} /><span className="text-secondary">{u.status}</span></span></td>
+                  <td className="py-3 pr-3 text-tertiary">{u.last}</td>
+                  <td className="py-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button className="text-caption text-secondary hover:text-primary">Edit</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
