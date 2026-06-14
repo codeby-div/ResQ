@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom"
 import ResQLogo from "../components/ui/ResQLogo"
 import UserInfoForm from "../components/ui/UserInfoForm"
 import AdminLoginForm from "../components/ui/AdminLoginForm"
-import type { UserInfo } from "../components/ui/UserInfoForm"
 import type { AdminCredentials } from "../components/ui/AdminLoginForm"
 
 const portals = [
@@ -26,7 +25,7 @@ export default function LandingPage() {
     }
   }
 
-  const handleUserComplete = (data: UserInfo) => {
+  const handleUserComplete = (data: Record<string, string | boolean>) => {
     sessionStorage.setItem("resq_user", JSON.stringify(data))
     navigate(`/${selectedPortal}`)
   }
