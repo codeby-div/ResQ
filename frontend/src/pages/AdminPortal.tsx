@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet"
 import L from "leaflet"
 import "leaflet/dist/leaflet.css"
@@ -153,7 +153,16 @@ export default function AdminPortal() {
             <ForecastView emergencies={emergencies} />
           )}
           {view === "hotspots" && (
-            <HotspotsView />
+            <HotspotsView emergencies={emergencies} />
+          )}
+          {view === "staff" && (
+            <AdminStaffView />
+          )}
+          {view === "reports" && (
+            <ReportsView emergencies={emergencies} hospitals={hospitals} />
+          )}
+          {view === "settings" && (
+            <AdminSettingsView />
           )}
           {view === "users" && (
             <UsersView />
@@ -454,18 +463,244 @@ function ForecastView(_: any) {
   )
 }
 
-function HotspotsView() {
+function HotspotsView({ emergencies }: any) {
+  const [range, setRange] = useState("7days")
+  const mapRef = useRef<HTMLDivElement>(null)
+  const [map, setMap] = useState<any>(null)
+
+  useEffect(() => {
+    if (mapRef.current && !map) {
+      const m = L.map(mapRef.current).setView([20.5937, 78.9629], 5)
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18 }).addTo(m)
+      setMap(m)
+    }
+    return () => { if (map) map.remove() }
+  }, [])
+
+  useEffect(() => {
+    if (!map) return
+    const groups: Record<string, { lat: number; lng: number; count: number }> = {}
+    emergencies.forEach((e: Emergency) => {
+      const key = `${Math.round(e.latitude * 10)},${Math.round(e.longitude * 10)}`
+      if (!groups[key]) groups[key] = { lat: e.latitude, lng: e.longitude, count: 0 }
+      groups[key].count++
+    })
+    Object.values(groups).forEach(g => {
+      const radius = Math.min(g.count * 8, 40)
+      const color = g.count >= 2 ? "#C0392B" : g.count === 1 ? "#B7660A" : "#2D7A45"
+      L.circleMarker([g.lat, g.lng], {
+        radius, color: "#fff", weight: 2, fillColor: color, fillOpacity: 0.6,
+      }).addTo(map).bindPopup(`<b>${g.count} emergency(ies)</b>`)
+    })
+  }, [map, emergencies])
+
   return (
-    <div className="max-w-5xl mx-auto space-y-4">
-      <h1 className="text-page-title text-primary">Hotspot Map</h1>
-      <div className="flex gap-2 mb-2">
-        {["Today", "7 days", "30 days"].map(t => <button key={t} className="px-3 py-1 border border-border rounded text-caption bg-surface2 text-primary">{t}</button>)}
+    <div className="max-w-6xl mx-auto space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-page-title text-primary">Hotspot Map</h1>
+        <div className="flex gap-2">
+          {["Today", "7 days", "30 days"].map(t => (
+            <button key={t} onClick={() => setRange(t === "Today" ? "today" : t === "7 days" ? "7days" : "30days")}
+              className={`px-3 py-1.5 rounded text-caption border transition-colors ${(t === "Today" && range === "today") || (t === "7 days" && range === "7days") || (t === "30 days" && range === "30days") ? "bg-accent dark:bg-primary-dark text-white dark:text-[#0F1117] border-accent" : "bg-surface2 text-secondary hover:text-primary border-border"}`}>
+              {t}
+            </button>
+          ))}
+        </div>
       </div>
-      <div className="card h-[400px] flex items-center justify-center text-caption text-tertiary">
-        <div className="text-center space-y-2">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mx-auto"><circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /></svg>
-          <p>Map overlay placeholder</p>
-          <p className="text-tertiary">Emergency density visualization</p>
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        <div className="card lg:col-span-3 h-[500px] overflow-hidden rounded-xl" ref={mapRef} />
+        <div className="space-y-3">
+          <div className="card">
+            <p className="text-section-label text-tertiary">Total emergencies</p>
+            <p className="text-metric-number tabular-nums text-primary mt-1">{emergencies.length}</p>
+          </div>
+          <div className="card">
+            <p className="text-section-label text-tertiary">Unique locations</p>
+            <p className="text-metric-number tabular-nums text-primary mt-1">{new Set(emergencies.map((e: Emergency) => `${Math.round(e.latitude * 10)},${Math.round(e.longitude * 10)}`)).size}</p>
+          </div>
+          <div className="card">
+            <p className="text-section-label text-tertiary">Hotspot zones</p>
+            <p className="text-metric-number tabular-nums text-primary mt-1">{emergencies.filter((e: Emergency) => e.severity === "critical").length}</p>
+          </div>
+          <div className="card p-3">
+            <p className="text-section-label text-tertiary">Legend</p>
+            <div className="mt-2 space-y-1.5 text-caption text-secondary">
+              <span className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-status-red" /> Critical zone</span>
+              <span className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-status-amber" /> Moderate</span>
+              <span className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-status-green" /> Low activity</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AdminStaffView() {
+  const staff = [
+    { name: "Dr. Meera Nair", role: "Cardiologist", hospital: "City Hospital", status: "Active" },
+    { name: "Nurse Priya K.", role: "Senior Nurse", hospital: "City Hospital", status: "Active" },
+    { name: "Dr. Arjun Reddy", role: "Neurologist", hospital: "Metro Medical", status: "Active" },
+    { name: "Dr. Sanjay Joshi", role: "Orthopedic Surgeon", hospital: "Metro Medical", status: "Off" },
+    { name: "Nurse Anita D.", role: "ICU Nurse", hospital: "City Hospital", status: "Active" },
+    { name: "Dr. Kavita B.", role: "Anesthesiologist", hospital: "Apollo", status: "On-call" },
+    { name: "Tech Raj M.", role: "Lab Technician", hospital: "Apollo", status: "Active" },
+    { name: "Dr. Deepak C.", role: "Pulmonologist", hospital: "City Hospital", status: "Off" },
+  ]
+  return (
+    <div className="max-w-6xl mx-auto space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-page-title text-primary">Staff Management</h1>
+        <button className="px-3 py-1.5 rounded bg-accent dark:bg-primary-dark text-white dark:text-[#0F1117] text-caption hover:opacity-85">Add staff</button>
+      </div>
+      <div className="card">
+        <div className="overflow-x-auto">
+          <table className="w-full text-caption">
+            <thead><tr className="border-b border-border">
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Name</th>
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Role</th>
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Hospital</th>
+              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Status</th>
+              <th className="w-24 py-3"></th>
+            </tr></thead>
+            <tbody>
+              {staff.map((s, i) => (
+                <tr key={i} className="border-b border-border hover:bg-surface2 transition-colors group">
+                  <td className="py-3 pr-3 text-primary">{s.name}</td>
+                  <td className="py-3 pr-3 text-secondary">{s.role}</td>
+                  <td className="py-3 pr-3 text-secondary">{s.hospital}</td>
+                  <td className="py-3 pr-3">
+                    <span className={`micro-tag ${s.status === "Active" ? "micro-tag-ok" : s.status === "On-call" ? "micro-tag-warning" : "micro-tag-default"}`}>{s.status}</span>
+                  </td>
+                  <td className="py-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button className="text-caption text-secondary hover:text-primary">Edit</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ReportsView({ emergencies, hospitals }: any) {
+  const resolved = emergencies.filter((e: Emergency) => e.status === "resolved").length
+  const avgResTime = "7.2 min"
+  const busiestHospital = hospitals.reduce((best: any, h: any) => (h.available_beds < (best?.available_beds ?? Infinity) ? h : best), hospitals[0])
+  return (
+    <div className="max-w-6xl mx-auto space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-page-title text-primary">Reports</h1>
+        <div className="flex gap-2">
+          {["PDF", "CSV", "Print"].map(f => (
+            <button key={f} className="px-3 py-1.5 rounded bg-surface2 text-caption text-secondary hover:text-primary border border-border transition-colors">{f}</button>
+          ))}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="card"><span className="text-section-label text-tertiary">Total emergencies</span><p className="text-metric-number tabular-nums text-primary mt-1">{emergencies.length}</p><p className="text-caption text-tertiary mt-1">This period</p></div>
+        <div className="card"><span className="text-section-label text-tertiary">Resolved</span><p className="text-metric-number tabular-nums text-primary mt-1">{resolved}</p><p className="text-caption text-tertiary mt-1">{emergencies.length ? Math.round(resolved / emergencies.length * 100) : 0}% rate</p></div>
+        <div className="card"><span className="text-section-label text-tertiary">Avg response</span><p className="text-metric-number tabular-nums text-primary mt-1">{avgResTime}</p><p className="text-caption text-tertiary mt-1">Dispatch to arrival</p></div>
+        <div className="card"><span className="text-section-label text-tertiary">Busiest hospital</span><p className="text-metric-number tabular-nums text-primary mt-1">{busiestHospital?.name}</p><p className="text-caption text-tertiary mt-1">{busiestHospital?.available_beds}/{busiestHospital?.total_beds} beds free</p></div>
+      </div>
+      <div className="card">
+        <h2 className="text-section-label text-tertiary mb-4">Emergency trend (7 days)</h2>
+        <div className="h-[200px] flex items-end gap-2">
+          {[8, 12, 7, 15, 10, 18, 14].map((v, i) => (
+            <div key={i} className="flex-1 flex flex-col items-center gap-1">
+              <span className="text-[10px] text-tertiary">{v}</span>
+              <div className="w-full rounded bg-accent dark:bg-primary-dark/70 transition-all hover:opacity-80" style={{ height: `${v * 10}px` }} />
+              <span className="text-[10px] text-tertiary">{"MTWTFSS"[i]}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="card">
+          <h2 className="text-section-label text-tertiary mb-3">By severity</h2>
+          {["critical", "high", "medium", "low"].map(s => {
+            const count = emergencies.filter((e: Emergency) => e.severity === s).length
+            const pct = emergencies.length ? Math.round(count / emergencies.length * 100) : 0
+            const color = s === "critical" ? "bg-status-red" : s === "high" ? "bg-status-amber" : s === "medium" ? "bg-status-green" : "bg-tertiary"
+            return (
+              <div key={s} className="flex items-center gap-3 mb-2">
+                <span className="w-16 text-caption text-secondary capitalize">{s}</span>
+                <div className="flex-1 h-2 bg-surface2 rounded-full"><div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} /></div>
+                <span className="w-10 text-right text-caption text-tertiary">{count}</span>
+              </div>
+            )
+          })}
+        </div>
+        <div className="card">
+          <h2 className="text-section-label text-tertiary mb-3">By hospital</h2>
+          {hospitals.slice(0, 5).map((h: Hospital) => {
+            const count = emergencies.filter((e: Emergency) => e.assigned_hospital_id === h.id).length
+            return (
+              <div key={h.id} className="flex items-center justify-between py-1.5 border-b border-border last:border-0">
+                <span className="text-caption text-primary">{h.name}</span>
+                <span className="text-caption text-tertiary">{count} cases</span>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AdminSettingsView() {
+  const [toggles, setToggles] = useState({ autoRefresh: true, emailAlerts: false, smsAlerts: true, publicDash: false, maintenance: false })
+  const toggle = (k: keyof typeof toggles) => setToggles(p => ({ ...p, [k]: !p[k] }))
+  return (
+    <div className="max-w-4xl mx-auto space-y-4">
+      <h1 className="text-page-title text-primary">System Settings</h1>
+      <div className="card space-y-1">
+        <h2 className="text-section-label text-tertiary pb-2">System preferences</h2>
+        {[
+          { key: "autoRefresh" as const, label: "Auto-refresh", desc: "Refresh dashboard every 8 seconds" },
+          { key: "emailAlerts" as const, label: "Email alerts", desc: "Send email on critical emergencies" },
+          { key: "smsAlerts" as const, label: "SMS alerts", desc: "Send SMS to on-call staff" },
+          { key: "publicDash" as const, label: "Public dashboard", desc: "Allow public read-only access" },
+          { key: "maintenance" as const, label: "Maintenance mode", desc: "Disable all non-admin access" },
+        ].map(s => (
+          <div key={s.key} className="flex items-center justify-between py-3 border-b border-border last:border-0">
+            <div><p className="text-body text-primary">{s.label}</p><p className="text-caption text-tertiary">{s.desc}</p></div>
+            <button onClick={() => toggle(s.key)}
+              className={`w-10 h-5 rounded-full transition-colors ${toggles[s.key] ? "bg-accent dark:bg-primary-dark" : "bg-border"} relative`}>
+              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${toggles[s.key] ? "translate-x-5" : "translate-x-0.5"}`} />
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="card space-y-3">
+          <h2 className="text-section-label text-tertiary">API Configuration</h2>
+          {["API URL", "API Key", "Refresh interval"].map(f => (
+            <div key={f}>
+              <label className="text-caption text-tertiary block mb-1">{f}</label>
+              <input className="w-full border border-border rounded px-3 py-1.5 text-caption bg-surface2 text-primary" defaultValue={f === "API URL" ? "http://localhost:8000" : f === "API Key" ? "••••••••" : "8s"} />
+            </div>
+          ))}
+          <button className="px-3 py-1.5 rounded bg-accent dark:bg-primary-dark text-white dark:text-[#0F1117] text-caption hover:opacity-85">Update</button>
+        </div>
+        <div className="card space-y-3">
+          <h2 className="text-section-label text-tertiary">Notifications</h2>
+          {["Emergency alerts", "System updates", "Staff changes", "Daily summary"].map(n => (
+            <div key={n} className="flex items-center justify-between">
+              <span className="text-caption text-primary">{n}</span>
+              <button className="w-10 h-5 rounded-full bg-accent dark:bg-primary-dark relative"><span className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-white shadow-sm" /></button>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="card space-y-3">
+        <h2 className="text-section-label text-tertiary">Data management</h2>
+        <div className="flex gap-3 flex-wrap">
+          {["Export all data", "Clear demo data", "Restore defaults"].map(a => (
+            <button key={a} className={`px-4 py-2 rounded text-caption border ${a === "Clear demo data" || a === "Restore defaults" ? "border-status-red text-status-red hover:bg-status-red hover:text-white" : "border-border text-secondary hover:text-primary"} transition-colors`}>{a}</button>
+          ))}
         </div>
       </div>
     </div>

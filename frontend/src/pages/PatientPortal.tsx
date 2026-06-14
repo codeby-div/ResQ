@@ -162,7 +162,7 @@ export default function PatientPortal() {
         )}
       </div>
 
-      <nav className="fixed bottom-0 left-0 right-0 h-[56px] bg-white dark:bg-surface-dark border-t border-border dark:border-border-dark flex">
+      <nav className="fixed bottom-0 left-0 right-0 bg-white dark:bg-surface-dark border-t border-border dark:border-border-dark flex" style={{ height: 'calc(56px + env(safe-area-inset-bottom, 0px))', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
         {(["report", "track"] as const).map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={`flex-1 flex flex-col items-center justify-center gap-0.5 text-caption transition-colors duration-150 ${
