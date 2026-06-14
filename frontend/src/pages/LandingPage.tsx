@@ -1,5 +1,10 @@
+import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import ResQLogo from "../components/ui/ResQLogo"
+import UserInfoForm from "../components/ui/UserInfoForm"
+import AdminLoginForm from "../components/ui/AdminLoginForm"
+import type { UserInfo } from "../components/ui/UserInfoForm"
+import type { AdminCredentials } from "../components/ui/AdminLoginForm"
 
 const portals = [
   { key: "patient", label: "Patient", desc: "Report emergency & track ambulance" },
@@ -10,6 +15,32 @@ const portals = [
 
 export default function LandingPage() {
   const navigate = useNavigate()
+  const [selectedPortal, setSelectedPortal] = useState<string | null>(null)
+  const [showAdminLogin, setShowAdminLogin] = useState(false)
+
+  const handlePortalClick = (key: string) => {
+    if (key === "admin") {
+      setShowAdminLogin(true)
+    } else {
+      setSelectedPortal(key)
+    }
+  }
+
+  const handleUserComplete = (data: UserInfo) => {
+    sessionStorage.setItem("resq_user", JSON.stringify(data))
+    navigate(`/${selectedPortal}`)
+  }
+
+  const handleAdminComplete = (data: AdminCredentials) => {
+    sessionStorage.setItem("resq_admin", JSON.stringify(data))
+    navigate("/admin")
+  }
+
+  const handleBack = () => {
+    setSelectedPortal(null)
+    setShowAdminLogin(false)
+  }
+
   return (
     <div className="min-h-screen bg-[#0F1117] flex items-center justify-center p-6">
       <div className="w-full max-w-3xl">
@@ -23,7 +54,7 @@ export default function LandingPage() {
           {portals.map((p) => (
             <button
               key={p.key}
-              onClick={() => navigate(`/${p.key}`)}
+              onClick={() => handlePortalClick(p.key)}
               className="bg-[#1A1D27] border border-[#22263A] rounded-xl p-6 text-left transition-all hover:-translate-y-0.5 hover:border-[#2E3348] hover:shadow-lg active:scale-[0.98]"
             >
               <h2 className="text-body font-medium text-[#F0F1F3]">{p.label}</h2>
@@ -32,6 +63,14 @@ export default function LandingPage() {
           ))}
         </div>
       </div>
+
+      {selectedPortal && (
+        <UserInfoForm portal={selectedPortal} onComplete={handleUserComplete} onBack={handleBack} />
+      )}
+
+      {showAdminLogin && (
+        <AdminLoginForm onComplete={handleAdminComplete} onBack={handleBack} />
+      )}
     </div>
   )
 }
