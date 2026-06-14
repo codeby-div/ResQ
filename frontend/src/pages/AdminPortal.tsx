@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { useNavigate } from "react-router-dom"
+import { useAuth } from "../context/AuthContext"
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet"
 import L from "leaflet"
 import "leaflet/dist/leaflet.css"
@@ -55,6 +56,7 @@ const sparkline = (data: number[], color = "#6B6966") => {
 }
 
 export default function AdminPortal() {
+  const { user, logout } = useAuth()
   const [view, setView] = useState<View>("overview")
   const [hospitals, setHospitals] = useState<Hospital[]>([])
   const [ambulances, setAmbulances] = useState<Ambulance[]>([])
@@ -99,12 +101,17 @@ export default function AdminPortal() {
           </div>
         ))}
       </nav>
-      <div className="p-4 border-t border-border dark:border-border-dark flex items-center gap-3">
-        <div className="w-7 h-7 rounded-full bg-surface2 dark:bg-surface2-dark flex items-center justify-center text-caption font-medium">AD</div>
-        <div className="flex-1 min-w-0">
-          <p className="text-caption font-medium text-primary dark:text-primary-dark truncate">Admin</p>
-          <p className="text-caption text-tertiary dark:text-tertiary-dark truncate">System Administrator</p>
+      <div className="p-4 border-t border-border dark:border-border-dark flex items-center gap-1">
+        <div className="w-7 h-7 rounded-full bg-surface2 dark:bg-surface2-dark flex items-center justify-center text-caption font-medium shrink-0">
+          {user?.display_name?.charAt(0)?.toUpperCase() || "A"}
         </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-caption font-medium text-primary dark:text-primary-dark truncate">{user?.display_name || "Admin"}</p>
+          <p className="text-caption text-tertiary dark:text-tertiary-dark truncate">{user?.role || "System Administrator"}</p>
+        </div>
+        <button onClick={() => { logout(); navigate("/") }} className="text-tertiary hover:text-primary transition-colors p-1" title="Logout">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
+        </button>
       </div>
     </aside>
   )

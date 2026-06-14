@@ -60,6 +60,16 @@ class Ambulance(Base):
     hospital = relationship("Hospital", back_populates="ambulances")
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(100), unique=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    role = Column(String(50), default="patient")
+    display_name = Column(String(255), default="")
+
+
 class Emergency(Base):
     __tablename__ = "emergencies"
 

@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom"
 import ResQLogo from "../components/ui/ResQLogo"
 import UserInfoForm from "../components/ui/UserInfoForm"
 import AdminLoginForm from "../components/ui/AdminLoginForm"
-import type { AdminCredentials } from "../components/ui/AdminLoginForm"
 
 const portals = [
   { key: "patient", label: "Patient", desc: "Report emergency & track ambulance" },
@@ -30,8 +29,7 @@ export default function LandingPage() {
     navigate(`/${selectedPortal}`)
   }
 
-  const handleAdminComplete = (data: AdminCredentials) => {
-    sessionStorage.setItem("resq_admin", JSON.stringify(data))
+  const handleAdminComplete = () => {
     navigate("/admin")
   }
 
