@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react"
+import { useNavigate } from "react-router-dom"
 import { createEmergency, fetchEmergencies } from "../services/api"
 import type { Emergency, EmergencyFormData } from "../types"
 
@@ -12,6 +13,7 @@ const severities = [
 type Tab = "report" | "track"
 
 export default function PatientPortal() {
+  const navigate = useNavigate()
   const [tab, setTab] = useState<Tab>("report")
   const [emergencies, setEmergencies] = useState<Emergency[]>([])
   const [name, setName] = useState("")
@@ -64,6 +66,7 @@ export default function PatientPortal() {
     <div className="min-h-screen bg-page dark:bg-[#0F1117] pb-20">
       <header className="sticky top-0 z-10 bg-white dark:bg-surface-dark border-b border-border dark:border-border-dark px-4 h-[52px] flex items-center justify-between">
         <div className="flex items-center gap-2">
+          <button onClick={() => navigate("/")} className="text-secondary hover:text-primary transition-colors text-sm mr-1" title="Back to role selection">&larr;</button>
           <span className="text-[18px] font-medium text-status-red">+</span>
           <span className="text-[15px] font-medium text-primary dark:text-primary-dark">ResQ</span>
         </div>
