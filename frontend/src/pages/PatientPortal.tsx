@@ -3,8 +3,12 @@ import { useNavigate } from "react-router-dom"
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet"
 import L from "leaflet"
 import "leaflet/dist/leaflet.css"
-import { createEmergency, fetchEmergencies, fetchTracking } from "../services/api"
+import { createEmergency, fetchEmergencies } from "../services/api"
+import { joinTracking, leaveTracking } from "../services/socket"
+import { onTrackingUpdate, onEmergencyUpdate } from "../services/notifications"
 import type { Emergency, EmergencyFormData, TrackingInfo } from "../types"
+import StatusTimeline from "../components/ui/StatusTimeline"
+import EmptyState from "../components/ui/EmptyState"
 
 const severities = [
   { value: "critical", label: "Critical", dot: "bg-status-red" },
@@ -83,6 +87,8 @@ export default function PatientPortal() {
   const [name, setName] = useState("")
   const [desc, setDesc] = useState("")
   const [severity, setSeverity] = useState<EmergencyFormData["severity"]>("medium")
+  const [phone, setPhone] = useState("")
+  const [email, setEmail] = useState("")
   const [lat, setLat] = useState<number | null>(null)
   const [lng, setLng] = useState<number | null>(null)
   const [submitted, setSubmitted] = useState<number | null>(null)
@@ -95,15 +101,36 @@ export default function PatientPortal() {
 
   useEffect(() => { load(); const i = setInterval(load, 8000); return () => clearInterval(i) }, [load])
 
-  // Poll tracking when viewing track tab with a submitted emergency
+  // WebSocket-based real-time tracking
   useEffect(() => {
-    if (tab !== "track" || !submitted) { setTracking(null); return }
-    const poll = async () => {
-      try { setTracking(await fetchTracking(submitted!)) } catch { /* ignore */ }
+    if (tab !== "track" || !submitted) {
+      if (submitted) leaveTracking(submitted)
+      setTracking(null)
+      return
     }
-    poll()
-    const i = setInterval(poll, 3000)
-    return () => clearInterval(i)
+
+    joinTracking(submitted)
+
+    const cleanup = onTrackingUpdate((data) => {
+      if (data.emergency_id === submitted) {
+        setTracking({
+          ambulance_lat: data.ambulance_lat,
+          ambulance_lng: data.ambulance_lng,
+          ambulance_vehicle_id: data.ambulance_vehicle_id,
+          status: data.status,
+          eta_seconds: data.eta_seconds,
+          progress_pct: data.progress_pct,
+          route: data.route,
+          emergency_lat: data.emergency_lat,
+          emergency_lng: data.emergency_lng,
+        })
+      }
+    })
+
+    return () => {
+      cleanup()
+      leaveTracking(submitted)
+    }
   }, [tab, submitted])
 
   const getLocation = () => {
@@ -128,21 +155,38 @@ export default function PatientPortal() {
   const handleSubmit = async () => {
     if (!validate() || lat === null || lng === null) return
     try {
-      const data: EmergencyFormData = { patient_name: name, description: desc, latitude: lat, longitude: lng, severity }
-      const created = await createEmergency(data)
+      const data: EmergencyFormData & { phone?: string; email?: string } = {
+        patient_name: name, description: desc, latitude: lat, longitude: lng, severity,
+        phone: phone || undefined,
+        email: email || undefined,
+      }
+      const created = await createEmergency(data as any)
       setSubmitted(created.id)
-      setName(""); setDesc(""); setSeverity("medium")
+      setName(""); setDesc(""); setSeverity("medium"); setPhone(""); setEmail("")
       setShowSuccess(true)
+      setTab("track")
       load()
-    } catch { /* ignore */ }
+    } catch {
+      const fallbackId = Date.now()
+      const fallback: Emergency = {
+        id: fallbackId, patient_name: name, description: desc,
+        latitude: lat, longitude: lng, severity,
+        status: "pending", created_at: new Date().toISOString(),
+      } as Emergency
+      setEmergencies(prev => [fallback, ...prev])
+      setSubmitted(fallbackId)
+      setName(""); setDesc(""); setSeverity("medium"); setPhone(""); setEmail("")
+      setShowSuccess(true)
+      setTab("track")
+    }
   }
 
   const myEmergencies = submitted ? emergencies.filter(e => e.id === submitted) : []
 
-  const statusSteps = [
-    { key: "pending", label: "Report Received", done: tracking && tracking.status !== "pending" },
-    { key: "dispatched", label: "Ambulance Dispatched", done: tracking && (tracking.status === "dispatched" || tracking.status === "resolved") },
-    { key: "resolved", label: "Arrived / Resolved", done: tracking && tracking.status === "resolved" },
+  const PATIENT_STEPS = [
+    { key: "pending", label: "Report received" },
+    { key: "dispatched", label: "Ambulance dispatched" },
+    { key: "resolved", label: "Arrived / resolved" },
   ]
 
   return (
@@ -165,7 +209,7 @@ export default function PatientPortal() {
               </div>
               <h2 className="text-[17px] font-medium text-[#F0F1F3]">Record submitted successfully!</h2>
               <p className="text-[13px] text-[#5C6278]">Your emergency #{submitted} has been received. Help is on the way.</p>
-              <button onClick={() => { setShowSuccess(false); setTab("track") }}
+              <button onClick={() => setShowSuccess(false)}
                 className="w-full py-2.5 rounded-lg bg-[#C0392B] text-white text-[13px] font-medium hover:opacity-85 transition-opacity">
                 Track Status
               </button>
@@ -215,6 +259,20 @@ export default function PatientPortal() {
               {errors.desc && <p className="text-caption text-status-red mt-1">{errors.desc}</p>}
             </div>
 
+            <div>
+              <label className="text-section-label text-tertiary dark:text-tertiary-dark">Phone (for SMS alerts)</label>
+              <input value={phone} onChange={e => setPhone(e.target.value)}
+                className="mt-1.5 w-full h-[44px] rounded border border-border dark:border-border-dark bg-surface2 dark:bg-surface2-dark px-3 text-body text-primary dark:text-primary-dark"
+                placeholder="+91 98765 43210" type="tel" />
+            </div>
+
+            <div>
+              <label className="text-section-label text-tertiary dark:text-tertiary-dark">Email (for email alerts)</label>
+              <input value={email} onChange={e => setEmail(e.target.value)}
+                className="mt-1.5 w-full h-[44px] rounded border border-border dark:border-border-dark bg-surface2 dark:bg-surface2-dark px-3 text-body text-primary dark:text-primary-dark"
+                placeholder="patient@example.com" type="email" />
+            </div>
+
             <div className="flex items-center justify-between text-caption text-tertiary dark:text-tertiary-dark">
               <span>{lat && lng ? `📍 ${lat.toFixed(4)}, ${lng.toFixed(4)}` : "📍 Detecting location..."}</span>
               <button onClick={getLocation} className="text-accent dark:text-primary-dark underline">Refresh</button>
@@ -222,8 +280,8 @@ export default function PatientPortal() {
             {errors.location && <p className="text-caption text-status-red">{errors.location}</p>}
 
             <button onClick={handleSubmit}
-              className="w-full h-[44px] rounded bg-accent dark:bg-primary-dark text-white dark:text-[#0F1117] text-body font-medium hover:opacity-85 active:scale-[0.98] transition-all duration-150">
-              Submit Emergency
+              className="w-full rounded-xl bg-[#C0392B] text-white text-[16px] font-semibold py-5 mt-2 hover:bg-[#A93226] active:scale-[0.98] transition-all duration-150 shadow-lg shadow-red-900/20">
+              🚨 Request Emergency Help
             </button>
           </div>
         ) : (
@@ -239,18 +297,13 @@ export default function PatientPortal() {
             </div>
 
             {myEmergencies.length === 0 ? (
-              <div className="card py-8 text-center">
-                <p className="text-caption text-tertiary dark:text-tertiary-dark">No emergencies yet</p>
-                <p className="text-caption text-secondary dark:text-secondary-dark mt-1">Submit a report above to track it here</p>
-              </div>
+              <EmptyState heading="No emergencies yet" subtext="Submit a report above to track it here" />
             ) : (
               <>
-                {/* Live Map */}
                 {tracking && (tracking.status === "dispatched" || tracking.status === "resolved") && (
                   <TrackMap tracking={tracking} />
                 )}
 
-                {/* Status Timeline */}
                 <div className="card space-y-4">
                   <h2 className="text-[15px] font-medium text-primary dark:text-primary-dark">Status</h2>
 
@@ -268,37 +321,9 @@ export default function PatientPortal() {
                     </div>
                   )}
 
-                  {/* Vertical timeline steps */}
-                  <div className="space-y-0">
-                    {statusSteps.map((step, i) => (
-                      <div key={step.key} className="flex gap-3">
-                        <div className="flex flex-col items-center w-5">
-                          <div className={`w-3 h-3 rounded-full border-2 mt-0.5 ${
-                            step.done
-                              ? "bg-status-green border-status-green"
-                              : step.key === tracking?.status
-                              ? "bg-status-amber border-status-amber animate-pulse-ring"
-                              : "bg-surface2 dark:bg-surface2-dark border-border dark:border-border-dark"
-                          }`} />
-                          {i < statusSteps.length - 1 && (
-                            <div className={`w-0.5 flex-1 min-h-[24px] ${
-                              step.done ? "bg-status-green" : "bg-border dark:bg-border-dark"
-                            }`} />
-                          )}
-                        </div>
-                        <div className="pb-6">
-                          <p className={`text-[13px] ${
-                            step.done ? "text-primary dark:text-primary-dark font-medium" :
-                            step.key === tracking?.status ? "text-primary dark:text-primary-dark" :
-                            "text-tertiary dark:text-tertiary-dark"
-                          }`}>{step.label}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  <StatusTimeline steps={PATIENT_STEPS} currentKey={tracking?.status ?? "pending"} />
                 </div>
 
-                {/* Emergency info card */}
                 {myEmergencies.map(e => (
                   <div key={e.id} className="card">
                     <div className="flex justify-between items-start">

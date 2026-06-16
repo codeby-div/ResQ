@@ -1,17 +1,21 @@
 import { useState, useEffect, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
 import { fetchEmergencies, updateEmergency, fetchAmbulances, updateAmbulance } from "../services/api"
+import { subscribeAmbulance, unsubscribeAmbulance } from "../services/socket"
+import { onAmbulanceUpdate } from "../services/notifications"
 import { demoAmbulances } from "../services/demoData"
 import type { Emergency, Ambulance } from "../types"
+import StatusTimeline from "../components/ui/StatusTimeline"
+import EmptyState from "../components/ui/EmptyState"
 
 type Tab = "dispatch" | "fleet"
 
-const timelineSteps = [
+const TIMELINE_STEPS = [
   { key: "dispatched", label: "Dispatched" },
   { key: "en_route", label: "En Route" },
-  { key: "arrived", label: "Arrived" },
-  { key: "transporting", label: "Transporting" },
-  { key: "resolved", label: "Resolved" },
+  { key: "arrived", label: "Arrived at scene" },
+  { key: "transporting", label: "Patient on board" },
+  { key: "resolved", label: "Handed over" },
 ]
 
 export default function AmbulancePortal() {
@@ -28,14 +32,26 @@ export default function AmbulancePortal() {
 
   useEffect(() => { load(); const i = setInterval(load, 5000); return () => clearInterval(i) }, [load])
 
+  // WebSocket: subscribe to ambulance-specific updates
+  useEffect(() => {
+    subscribeAmbulance(selectedId)
+    const cleanup = onAmbulanceUpdate((data) => {
+      if (data.emergency_id) load()
+    })
+    return () => {
+      cleanup()
+      unsubscribeAmbulance(selectedId)
+    }
+  }, [selectedId, load])
+
   const myAmbulance = ambulances.find(a => a.id === selectedId)
   const myEmergencies = emergencies.filter(e => e.assigned_ambulance_id === selectedId)
   const currentEmergency = myEmergencies[0]
-  const currentStepIdx = currentEmergency ? timelineSteps.findIndex(s => s.key === currentEmergency.status) : -1
+  const currentStepIdx = currentEmergency ? TIMELINE_STEPS.findIndex(s => s.key === currentEmergency.status) : -1
 
   const advanceStep = async () => {
-    if (!currentEmergency || currentStepIdx >= timelineSteps.length - 1) return
-    const next = timelineSteps[currentStepIdx + 1].key
+    if (!currentEmergency || currentStepIdx >= TIMELINE_STEPS.length - 1) return
+    const next = TIMELINE_STEPS[currentStepIdx + 1].key
     const status = next === "resolved" ? "resolved" : next === "arrived" || next === "transporting" ? "dispatched" : next
     await updateEmergency(currentEmergency.id, { status } as any)
     load()
@@ -83,10 +99,7 @@ export default function AmbulancePortal() {
             <h1 className="text-page-title text-primary dark:text-primary-dark">Current Dispatch</h1>
 
             {!currentEmergency ? (
-              <div className="py-8 text-center">
-                <p className="text-caption text-tertiary dark:text-tertiary-dark">No active assignment</p>
-                <p className="text-metric-label text-secondary dark:text-secondary-dark mt-1">Waiting for dispatch</p>
-              </div>
+              <EmptyState heading="No active assignment" subtext="Waiting for dispatch" />
             ) : (
               <>
                 <div className="border border-border dark:border-border-dark rounded-card p-4 bg-surface2 dark:bg-surface2-dark">
@@ -103,40 +116,9 @@ export default function AmbulancePortal() {
                   </p>
                 </div>
 
-                <div className="space-y-0 py-2">
-                  {timelineSteps.map((step, i) => {
-                    const completed = i < currentStepIdx
-                    const current = i === currentStepIdx
-                    return (
-                      <div key={step.key} className="flex gap-3">
-                        <div className="flex flex-col items-center">
-                          <div className={`w-3 h-3 rounded-full border-2 flex items-center justify-center ${
-                            completed ? "bg-accent dark:bg-primary-dark border-accent dark:border-primary-dark" :
-                            current ? "bg-status-green border-status-green" :
-                            "border-tertiary dark:border-tertiary-dark"
-                          }`}>
-                            {completed && <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>}
-                          </div>
-                          {i < timelineSteps.length - 1 && <div className="w-px h-5 bg-border dark:border-border-dark" />}
-                        </div>
-                        <div className="pb-3 flex-1">
-                          <p className={`text-body ${current ? "font-medium text-primary dark:text-primary-dark" : completed ? "text-secondary dark:text-secondary-dark" : "text-tertiary dark:text-tertiary-dark"}`}>
-                            {step.label}
-                          </p>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-
-                {currentStepIdx < timelineSteps.length - 1 && (
-                  <button onClick={advanceStep}
-                    className="w-full h-[44px] rounded bg-accent dark:bg-primary-dark text-white dark:text-[#0F1117] text-body font-medium hover:opacity-85 active:scale-[0.98] transition-all duration-150">
-                    Update Status
-                  </button>
-                )}
-                {currentStepIdx === timelineSteps.length - 1 && (
-                  <span className="micro-tag-ok block text-center">Completed</span>
+                <StatusTimeline steps={TIMELINE_STEPS} currentKey={currentEmergency?.status ?? "dispatched"} onAdvance={advanceStep} advanceLabel={`Mark as ${TIMELINE_STEPS[currentStepIdx + 1]?.label ?? "Complete"}`} />
+                {currentStepIdx === TIMELINE_STEPS.length - 1 && (
+                  <span className="micro-tag-ok block text-center mt-3">Completed</span>
                 )}
               </>
             )}
@@ -147,7 +129,7 @@ export default function AmbulancePortal() {
           <div className="card space-y-3">
             <h1 className="text-page-title text-primary dark:text-primary-dark">Fleet Overview</h1>
             {ambulances.length === 0 ? (
-              <p className="text-caption text-tertiary dark:text-tertiary-dark py-4 text-center">No vehicles</p>
+              <EmptyState heading="No vehicles" />
             ) : (
               ambulances.map(a => (
                 <div key={a.id} className="flex items-center justify-between py-3 border-b border-border dark:border-border-dark last:border-0">

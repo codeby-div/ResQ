@@ -2,9 +2,14 @@ import { useState, useEffect, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
 import { fetchHospitals, fetchEmergencies, updateEmergency, updateHospital } from "../services/api"
 import { demoHospitals } from "../services/demoData"
+import { subscribeAllEmergencies, unsubscribeAllEmergencies } from "../services/socket"
+import { onEmergencyUpdate } from "../services/notifications"
 import type { Hospital, Emergency } from "../types"
 import AlertItem from "../components/ui/AlertItem"
 import ConfirmationModal from "../components/ui/ConfirmationModal"
+import MetricCard from "../components/ui/MetricCard"
+import DataTable from "../components/ui/DataTable"
+import EmptyState from "../components/ui/EmptyState"
 
 type View = "dashboard" | "incoming" | "bedmgmt" | "wardmap" | "icu" | "staff" | "availability" | "notifications" | "settings"
 
@@ -49,6 +54,16 @@ export default function HospitalPortal() {
   }, [])
 
   useEffect(() => { load(); const i = setInterval(load, 10000); return () => clearInterval(i) }, [load])
+
+  // WebSocket: real-time emergency updates
+  useEffect(() => {
+    subscribeAllEmergencies()
+    const cleanup = onEmergencyUpdate(() => { load() })
+    return () => {
+      cleanup()
+      unsubscribeAllEmergencies()
+    }
+  }, [load])
 
   const h = hospitals.find(x => x.id === selectedId)
   const incoming = emergencies.filter(e => e.assigned_hospital_id === selectedId && e.status !== "resolved")
@@ -134,96 +149,118 @@ function DashboardView({ h, incoming, emergencies, hospitals, bedPct, relTime }:
     <div className="max-w-7xl mx-auto space-y-6">
       <h1 className="text-page-title text-primary dark:text-primary-dark">{h.name}</h1>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className={`card ${bedPct > 30 ? "card-ok" : bedPct > 10 ? "card-warning" : "card-critical"}`}>
-          <span className="text-section-label text-tertiary">General beds free</span>
-          <p className="text-metric-number tabular-nums text-primary mt-1">{h.available_beds}/{h.total_beds}</p>
-        </div>
-        <div className={`card ${h.available_icu > 3 ? "card-ok" : h.available_icu > 0 ? "card-warning" : "card-critical"}`}>
-          <span className="text-section-label text-tertiary">ICU beds free</span>
-          <p className="text-metric-number tabular-nums text-primary mt-1">{h.available_icu}/{h.total_icu}</p>
-        </div>
-        <div className={`card ${h.available_beds > 5 ? "card-ok" : "card-warning"}`}>
-          <span className="text-section-label text-tertiary">ER bays free</span>
-          <p className="text-metric-number tabular-nums text-primary mt-1">{Math.max(0, Math.floor(h.available_beds / 3))}</p>
-        </div>
-        <div className="card">
-          <span className="text-section-label text-tertiary">Incoming patients</span>
-          <p className="text-metric-number tabular-nums text-primary mt-1">{incoming.length}</p>
-          {incoming.length > 0 && <p className="text-caption text-tertiary mt-1">ETA ~8-12 min</p>}
-        </div>
+        <MetricCard
+          label="General beds free"
+          value={`${h.available_beds}/${h.total_beds}`}
+          variant={bedPct > 30 ? "ok" : bedPct > 10 ? "warning" : "critical"}
+          micro="General ward"
+        />
+        <MetricCard
+          label="ICU beds free"
+          value={`${h.available_icu}/${h.total_icu}`}
+          variant={h.available_icu > 3 ? "ok" : h.available_icu > 0 ? "warning" : "critical"}
+          micro="Intensive care"
+        />
+        <MetricCard
+          label="ER bays free"
+          value={String(Math.max(0, Math.floor(h.available_beds / 3)))}
+          variant={h.available_beds > 5 ? "ok" : "warning"}
+          micro="Emergency room"
+        />
+        <MetricCard
+          label="Incoming"
+          value={String(incoming.length)}
+          micro={incoming.length > 0 ? "ETA ~8-12 min" : "None expected"}
+        />
       </div>
 
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-4">
-          <div className="card">
-            <span className="text-section-label text-tertiary">Incoming Ambulances</span>
-            <div className="overflow-x-auto mt-3">
-              <table className="w-full text-caption">
-                <thead><tr className="border-b border-border">
-                  <th className="text-left py-3 pr-4 text-section-label text-tertiary font-medium">Case ID</th>
-                  <th className="text-left py-3 pr-4 text-section-label text-tertiary font-medium">Type</th>
-                  <th className="text-left py-3 pr-4 text-section-label text-tertiary font-medium">Severity</th>
-                  <th className="text-left py-3 pr-4 text-section-label text-tertiary font-medium">Ambulance</th>
-                  <th className="text-left py-3 pr-4 text-section-label text-tertiary font-medium">ETA</th>
-                  <th className="w-24 py-3"></th>
-                </tr></thead>
-                <tbody>
-                  {incoming.slice(0, 5).map((e: Emergency) => (
-                    <tr key={e.id} className="border-b border-border hover:bg-surface2 dark:hover:bg-surface2-dark transition-colors group">
-                      <td className="py-3 pr-4 text-primary">#{e.id}</td>
-                      <td className="py-3 pr-4 text-secondary">{e.description?.slice(0, 15) || "—"}</td>
-                      <td className="py-3 pr-4">
-                        <span className="flex items-center gap-1.5">
-                          <span className={`w-1.5 h-1.5 rounded-full ${e.severity === "critical" ? "bg-status-red" : e.severity === "high" ? "bg-status-amber" : "bg-status-green"}`} />
-                          <span className="text-secondary">{e.severity}</span>
-                        </span>
-                      </td>
-                      <td className="py-3 pr-4 text-secondary">AMB-{e.assigned_ambulance_id || "—"}</td>
-                      <td className="py-3 pr-4 text-secondary">{Math.floor(Math.random() * 10 + 3)} min</td>
-                      <td className="py-3 opacity-0 group-hover:opacity-100 transition-opacity">
+          <DataTable label="Incoming Ambulances">
+            <thead>
+              <tr className="border-b border-border dark:border-border-dark">
+                <th className="th">Case ID</th>
+                <th className="th">Type</th>
+                <th className="th">Severity</th>
+                <th className="th">Ambulance</th>
+                <th className="th">ETA</th>
+                <th className="w-24 py-3"/>
+              </tr>
+            </thead>
+            <tbody>
+              {incoming.slice(0, 5).map((e: Emergency) => (
+                <tr key={e.id} className="border-b border-border dark:border-border-dark hover:bg-surface2 dark:hover:bg-surface2-dark transition-colors group">
+                  <td className="td text-primary">#{e.id}</td>
+                  <td className="td text-secondary">{e.description?.slice(0, 15) || "—"}</td>
+                  <td className="td">
+                    <span className="flex items-center gap-1.5">
+                      <span className={`w-1.5 h-1.5 rounded-full ${e.severity === "critical" ? "bg-status-red" : e.severity === "high" ? "bg-status-amber" : "bg-status-green"}`} />
+                      <span className="text-secondary">{e.severity}</span>
+                    </span>
+                  </td>
+                  <td className="td text-secondary">AMB-{e.assigned_ambulance_id || "—"}</td>
+<td className="td text-secondary">—</td>
+                  <td className="py-3 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button className="text-caption bg-accent dark:bg-primary-dark text-white dark:text-[#0F1117] px-2 py-1 rounded hover:opacity-85 text-nowrap">Prep ER bay</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </DataTable>
 
-          <div className="card">
-            <span className="text-section-label text-tertiary">Recent Admissions</span>
-            <div className="overflow-x-auto mt-3">
-              <table className="w-full text-caption">
-                <thead><tr className="border-b border-border">
-                  <th className="text-left py-3 pr-4 text-section-label text-tertiary font-medium">Patient</th>
-                  <th className="text-left py-3 pr-4 text-section-label text-tertiary font-medium">Case type</th>
-                  <th className="text-left py-3 pr-4 text-section-label text-tertiary font-medium">Ward</th>
-                  <th className="text-left py-3 pr-4 text-section-label text-tertiary font-medium">Admitted</th>
-                  <th className="text-left py-3 pr-4 text-section-label text-tertiary font-medium">Status</th>
-                </tr></thead>
-                <tbody>
-                  {emergencies.filter((e: Emergency) => e.status === "resolved").slice(0, 4).map((e: Emergency) => (
-                    <tr key={e.id} className="border-b border-border hover:bg-surface2 transition-colors">
-                      <td className="py-3 pr-4 text-primary">{e.patient_name}</td>
-                      <td className="py-3 pr-4 text-secondary">{e.severity}</td>
-                      <td className="py-3 pr-4 text-secondary">General</td>
-                      <td className="py-3 pr-4 text-tertiary">{relTime(e.created_at)}</td>
-                      <td className="py-3"><span className="micro-tag-ok">Stable</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <DataTable label="Recent Admissions">
+            <thead>
+              <tr className="border-b border-border dark:border-border-dark">
+                <th className="th">Patient</th>
+                <th className="th">Case type</th>
+                <th className="th">Ward</th>
+                <th className="th">Admitted</th>
+                <th className="th">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {emergencies.filter((e: Emergency) => e.status === "resolved").slice(0, 4).map((e: Emergency) => (
+                <tr key={e.id} className="border-b border-border dark:border-border-dark hover:bg-surface2 dark:hover:bg-surface2-dark transition-colors">
+                  <td className="td text-primary">{e.patient_name}</td>
+                  <td className="td text-secondary">{e.severity}</td>
+                  <td className="td text-secondary">General</td>
+                  <td className="td text-tertiary">{relTime(e.created_at)}</td>
+                  <td className="py-3"><span className="micro-tag-ok">Stable</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </DataTable>
         </div>
 
         <div className="space-y-4">
-          <span className="text-section-label text-tertiary">Alerts Feed</span>
-          <div className="card p-0 divide-y divide-border">
-            {emergencies.slice(0, 4).map((e: Emergency) => (
-              <AlertItem key={e.id} severity={e.severity === "critical" ? "critical" : e.severity === "high" ? "warning" : "info"} message={`${e.patient_name} — ${e.severity}`} timestamp={relTime(e.created_at)} unread={e.status === "pending"} />
-            ))}
-            {emergencies.length === 0 && <div className="p-8 text-center text-caption text-tertiary">No active alerts</div>}
+          <div className="card p-0">
+            <div className="flex items-center justify-between p-4 border-b border-border dark:border-border-dark">
+              <span className="text-section-label text-tertiary dark:text-tertiary-dark">Alerts feed</span>
+              <button className="text-caption text-tertiary hover:text-primary transition-colors">Mark all read</button>
+            </div>
+            <div className="divide-y divide-border dark:divide-border-dark max-h-[380px] overflow-y-auto">
+              {emergencies.slice(0, 6).map((e: Emergency) => (
+                <AlertItem
+                  key={e.id}
+                  severity={e.severity === "critical" ? "critical" : e.severity === "high" ? "warning" : "info"}
+                  message={`${e.patient_name} — ${e.severity} — ${e.status}`}
+                  timestamp={relTime(e.created_at)}
+                  unread={e.status === "pending"}
+                />
+              ))}
+              {emergencies.length === 0 && (
+                <EmptyState
+                  heading="No active alerts"
+                  subtext="System is operating normally"
+                  icon={
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                      <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+                    </svg>
+                  }
+                />
+              )}
+            </div>
           </div>
 
           <div className="card">
@@ -255,33 +292,48 @@ function IncomingView({ incoming, load }: any) {
   return (
     <div className="max-w-5xl mx-auto space-y-4">
       <h1 className="text-page-title text-primary">Incoming Cases</h1>
-      <div className="card">
-        <div className="overflow-x-auto">
-          <table className="w-full text-caption">
-            <thead><tr className="border-b border-border">
-              <th className="text-left py-3 pr-4 text-section-label text-tertiary font-medium">Case ID</th>
-              <th className="text-left py-3 pr-4 text-section-label text-tertiary font-medium">Patient</th>
-              <th className="text-left py-3 pr-4 text-section-label text-tertiary font-medium">Severity</th>
-              <th className="text-left py-3 pr-4 text-section-label text-tertiary font-medium">ETA</th>
-              <th className="w-24 py-3"></th>
-            </tr></thead>
-            <tbody>
-              {incoming.map((e: Emergency) => (
-                <tr key={e.id} className="border-b border-border hover:bg-surface2 transition-colors group">
-                  <td className="py-3 pr-4 text-primary">#{e.id}</td>
-                  <td className="py-3 pr-4 text-primary">{e.patient_name}</td>
-                  <td className="py-3 pr-4"><span className={`micro-tag ${e.severity === "critical" ? "micro-tag-critical" : e.severity === "high" ? "micro-tag-warning" : "micro-tag-info"}`}>{e.severity}</span></td>
-                  <td className="py-3 pr-4 text-tertiary">{Math.floor(Math.random() * 10 + 3)} min</td>
-                  <td className="py-3 opacity-0 group-hover:opacity-100 transition-opacity">
+      <DataTable>
+        <thead>
+          <tr className="border-b border-border dark:border-border-dark">
+            <th className="th">Case ID</th>
+            <th className="th">Patient</th>
+            <th className="th">Severity</th>
+            <th className="th">ETA</th>
+            <th className="w-24 py-3"/>
+          </tr>
+        </thead>
+        <tbody>
+          {incoming.map((e: Emergency) => (
+            <tr key={e.id} className="border-b border-border dark:border-border-dark hover:bg-surface2 dark:hover:bg-surface2-dark transition-colors group">
+              <td className="td text-primary">#{e.id}</td>
+              <td className="td text-primary">{e.patient_name}</td>
+              <td className="td"><span className={`micro-tag ${e.severity === "critical" ? "micro-tag-critical" : e.severity === "high" ? "micro-tag-warning" : "micro-tag-info"}`}>{e.severity}</span></td>
+<td className="td text-tertiary">—</td>
+              <td className="py-3 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button onClick={async () => { await updateEmergency(e.id, { status: "resolved" } as any); load() }} className="text-caption text-secondary hover:text-primary">Assign bed</button>
-                  </td>
-                </tr>
-              ))}
-              {incoming.length === 0 && <tr><td colSpan={5} className="py-8 text-center text-caption text-tertiary">No incoming cases</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </div>
+              </td>
+            </tr>
+          ))}
+          {incoming.length === 0 && (
+            <tr>
+              <td colSpan={5}>
+                <EmptyState
+                  heading="No incoming cases"
+                  subtext="All ambulances en route"
+                  icon={
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <rect x="2" y="8" width="6" height="13" rx="1"/>
+                      <rect x="16" y="8" width="6" height="13" rx="1"/>
+                      <circle cx="5.5" cy="21.5" r="2.5"/>
+                      <circle cx="18.5" cy="21.5" r="2.5"/>
+                    </svg>
+                  }
+                />
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </DataTable>
     </div>
   )
 }
@@ -314,11 +366,11 @@ function BedMgmtView({ h, load, selectedId }: any) {
 }
 
 function WardMapView(_: any) {
-  const bedColors: Record<string, string> = {
-    free: "bg-surface2 dark:bg-surface2-dark text-tertiary",
-    occupied: "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-300 dark:border-red-700",
-    incoming: "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700",
-    reserved: "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 border border-green-300 dark:border-green-700",
+  const bedClasses: Record<string, string> = {
+    free: "bg-[#F0EFED] text-[#9E9B97] border border-[#E2E0DC]",
+    occupied: "bg-[#FDF0EF] text-[#C0392B] border border-[#f5c6c4]",
+    incoming: "bg-[#FDF5EC] text-[#B7660A] border border-[#f5ddb8]",
+    reserved: "bg-[#EDF6F0] text-[#2D7A45] border border-[#b8ddc4]",
   }
   return (
     <div className="max-w-5xl mx-auto space-y-4">
@@ -326,7 +378,7 @@ function WardMapView(_: any) {
       <div className="card space-y-4">
         <div className="flex gap-4 text-caption text-secondary">
           {[["free", "Free"], ["occupied", "Occupied"], ["incoming", "Incoming"], ["reserved", "Reserved"]].map(([k, v]) => (
-            <span key={k} className="flex items-center gap-1"><span className={`w-3 h-3 rounded ${bedColors[k].split(" ")[0]}`} />{v}</span>
+            <span key={k} className="flex items-center gap-1"><span className={`w-3 h-3 rounded ${bedClasses[k].split(" ")[0]}`} />{v}</span>
           ))}
         </div>
         <div className="grid grid-cols-8 sm:grid-cols-10 gap-2">
@@ -334,7 +386,7 @@ function WardMapView(_: any) {
             const type = i < 18 ? "free" : i < 38 ? "occupied" : i < 48 ? "incoming" : "reserved"
             const pulse = type === "incoming" ? "animate-pulse" : ""
             return (
-              <button key={i} className={`w-full aspect-square rounded text-[10px] flex items-center justify-center ${bedColors[type]} ${pulse} transition-transform hover:scale-110`} title={`Bed ${i + 1}: ${type}`} aria-label={`Bed ${i + 1}: ${type}`}>
+              <button key={i} className={`w-full aspect-square rounded text-[10px] flex items-center justify-center ${bedClasses[type]} ${pulse} transition-transform hover:scale-110`} title={`Bed ${i + 1}: ${type}`} aria-label={`Bed ${i + 1}: ${type}`}>
                 {i + 1}
               </button>
             )
@@ -531,7 +583,7 @@ function NotificationsView() {
             {!n.read && <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0 mt-2" />}
           </div>
         ))}
-        {items.length === 0 && <p className="text-caption text-tertiary text-center py-8">No {filter} notifications</p>}
+        {items.length === 0 && <EmptyState heading={`No ${filter} notifications`} />}
       </div>
     </div>
   )

@@ -1,13 +1,16 @@
+import Sparkline from "./Sparkline"
+
 interface Props {
   label: string
   value: string
   variant?: "default" | "critical" | "warning" | "ok"
   trend?: number[]
+  trendColor?: string
   micro?: string
   icon?: React.ReactNode
 }
 
-export default function MetricCard({ label, value, variant = "default", micro, icon }: Props) {
+export default function MetricCard({ label, value, variant = "default", trend, trendColor, micro, icon }: Props) {
   const variantClass =
     variant === "critical" ? "card-critical" :
     variant === "warning" ? "card-warning" :
@@ -18,13 +21,18 @@ export default function MetricCard({ label, value, variant = "default", micro, i
     <div
       className={`${variantClass} transition-all duration-150 hover:shadow-sm animate-fade-in`}
     >
-      <div className="flex items-center justify-between mb-1">
+      <div className="flex items-start justify-between mb-2">
         <span className="text-section-label text-tertiary dark:text-tertiary-dark">
           {label}
         </span>
-        {icon && (
-          <span className="text-tertiary dark:text-tertiary-dark">{icon}</span>
-        )}
+        <div className="flex items-center gap-2">
+          {trend && (
+            <Sparkline data={trend} color={trendColor ?? "#9E9B97"} height={28} />
+          )}
+          {icon && (
+            <span className="text-tertiary dark:text-tertiary-dark">{icon}</span>
+          )}
+        </div>
       </div>
       <div className="flex items-end justify-between">
         <span className="text-metric-number tabular-nums text-primary dark:text-primary-dark">

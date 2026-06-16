@@ -83,3 +83,20 @@ class Emergency(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     assigned_ambulance_id = Column(Integer, ForeignKey("ambulances.id"), nullable=True)
     assigned_hospital_id = Column(Integer, ForeignKey("hospitals.id"), nullable=True)
+    phone = Column(String(20), nullable=True)
+    email = Column(String(255), nullable=True)
+    push_token = Column(String(500), nullable=True)
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    emergency_id = Column(Integer, ForeignKey("emergencies.id"), nullable=True)
+    title = Column(String(255), nullable=False)
+    body = Column(String(1000), nullable=False)
+    type = Column(String(50), default="info")
+    channel = Column(String(50), default="in_app")
+    read = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

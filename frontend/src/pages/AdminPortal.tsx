@@ -6,9 +6,14 @@ import L from "leaflet"
 import "leaflet/dist/leaflet.css"
 import { fetchHospitals, fetchAmbulances, fetchEmergencies, updateEmergency } from "../services/api"
 import { demoHospitals, demoAmbulances } from "../services/demoData"
+import { subscribeAllEmergencies, unsubscribeAllEmergencies } from "../services/socket"
+import { onEmergencyUpdate } from "../services/notifications"
 import type { Hospital, Ambulance, Emergency } from "../types"
 import AlertItem from "../components/ui/AlertItem"
 import ConfirmationModal from "../components/ui/ConfirmationModal"
+import MetricCard from "../components/ui/MetricCard"
+import DataTable from "../components/ui/DataTable"
+import EmptyState from "../components/ui/EmptyState"
 
 type View = "overview" | "livemap" | "emergencies" | "hospitals" | "ambulances" | "staff" | "forecast" | "hotspots" | "reports" | "users" | "settings"
 
@@ -48,11 +53,8 @@ const relTime = (iso: string) => {
   if (m < 1) return "just now"; if (m < 60) return `${m}m ago`; return `${Math.floor(m / 60)}h ago`
 }
 
-const sparkline = (data: number[], color = "#6B6966") => {
-  if (data.length < 2) return null
-  const w = 80, h = 28, min = Math.min(...data), max = Math.max(...data), r = max - min || 1, sx = w / (data.length - 1)
-  const pts = data.map((v, i) => `${i * sx},${h - ((v - min) / r) * (h - 4) - 2}`).join(" ")
-  return <svg width={w} height={h} className="shrink-0"><polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" /></svg>
+const DEMO_ETA: Record<number, number> = {
+  1: 6, 2: 11, 3: 4, 4: 8, 5: 14, 6: 7, 7: 9, 8: 5
 }
 
 export default function AdminPortal() {
@@ -74,6 +76,16 @@ export default function AdminPortal() {
   }, [])
 
   useEffect(() => { load(); const i = setInterval(load, 8000); return () => clearInterval(i) }, [load])
+
+  // WebSocket: real-time emergency updates
+  useEffect(() => {
+    subscribeAllEmergencies()
+    const cleanup = onEmergencyUpdate(() => { load() })
+    return () => {
+      cleanup()
+      unsubscribeAllEmergencies()
+    }
+  }, [load])
 
   const filtered = emergencies.filter(e => e.patient_name.toLowerCase().includes(search.toLowerCase()))
   const pending = emergencies.filter(e => e.status === "pending").length
@@ -145,7 +157,7 @@ export default function AdminPortal() {
 
         <main className="flex-1 overflow-y-auto p-6">
           {view === "overview" && (
-            <OverviewView emergencies={emergencies} hospitals={hospitals} ambulances={ambulances} pending={pending} critical={critical} availAmb={availAmb} totalBeds={totalBeds} filtered={filtered} search={search} setSearch={setSearch} relTime={relTime} sparkline={sparkline} setReassignTarget={setReassignTarget} />
+            <OverviewView emergencies={emergencies} hospitals={hospitals} ambulances={ambulances} pending={pending} critical={critical} availAmb={availAmb} totalBeds={totalBeds} filtered={filtered} search={search} setSearch={setSearch} relTime={relTime} setReassignTarget={setReassignTarget} />
           )}
           {view === "livemap" && (
             <LiveMapView hospitals={hospitals} ambulances={ambulances} emergencies={emergencies} />
@@ -193,80 +205,121 @@ export default function AdminPortal() {
   )
 }
 
-function OverviewView({ emergencies, hospitals, ambulances, pending, critical, availAmb, totalBeds, filtered, search, setSearch, relTime, sparkline, setReassignTarget }: any) {
-  const trend = [12, 14, 11, 15, 13, 17, pending]
+function OverviewView({ emergencies, hospitals, ambulances, pending, critical, availAmb, totalBeds, filtered, search, setSearch, relTime, setReassignTarget }: any) {
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       <h1 className="text-page-title text-primary dark:text-primary-dark">Command Dashboard</h1>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className={`card ${critical > 0 ? "card-critical" : ""}`}>
-          <div className="flex items-center justify-between"><span className="text-section-label text-tertiary">Active emergencies</span>{sparkline(trend, "#C0392B")}</div>
-          <p className="text-metric-number tabular-nums text-primary mt-1">{emergencies.filter((e: Emergency) => e.status !== "resolved").length}</p>
-          <p className="text-caption text-secondary mt-1">{pending} pending dispatch</p>
-        </div>
-        <div className="card">
-          <div className="flex items-center justify-between"><span className="text-section-label text-tertiary">Beds available</span>{sparkline([45, 42, 38, 41, 39, 36, totalBeds], "#2D7A45")}</div>
-          <p className="text-metric-number tabular-nums text-primary mt-1">{totalBeds}</p>
-          <p className="text-caption text-secondary mt-1">City-wide total</p>
-        </div>
-        <div className={`card ${availAmb < 4 ? "card-warning" : "card-ok"}`}>
-          <div className="flex items-center justify-between"><span className="text-section-label text-tertiary">Ambulances free</span>{sparkline([8, 7, 5, 6, 4, 3, availAmb], availAmb < 4 ? "#B7660A" : "#2D7A45")}</div>
-          <p className="text-metric-number tabular-nums text-primary mt-1">{availAmb}</p>
-          <p className="text-caption text-secondary mt-1">of {ambulances.length} total</p>
-        </div>
-        <div className="card">
-          <div className="flex items-center justify-between"><span className="text-section-label text-tertiary">Avg response</span>{sparkline([9, 8, 10, 7, 8, 6, 7], "#2D7A45")}</div>
-          <p className="text-metric-number tabular-nums text-primary mt-1">7.2 min</p>
-          <p className="text-caption text-secondary mt-1">↓ 12% from yesterday</p>
-        </div>
+        <MetricCard
+          label="Active emergencies"
+          value={String(emergencies.filter((e: Emergency) => e.status !== "resolved").length)}
+          variant={critical > 0 ? "critical" : "default"}
+          trend={[12, 14, 11, 15, 13, 17, pending]}
+          trendColor="#C0392B"
+          micro={`${pending} pending dispatch`}
+        />
+        <MetricCard
+          label="Beds available"
+          value={String(totalBeds)}
+          variant="default"
+          trend={[45, 42, 38, 41, 39, 36, totalBeds]}
+          trendColor="#2D7A45"
+          micro="City-wide total"
+        />
+        <MetricCard
+          label="Ambulances free"
+          value={String(availAmb)}
+          variant={availAmb < 4 ? "warning" : "ok"}
+          trend={[8, 7, 5, 6, 4, 3, availAmb]}
+          trendColor={availAmb < 4 ? "#B7660A" : "#2D7A45"}
+          micro={`of ${ambulances.length} total`}
+        />
+        <MetricCard
+          label="Avg response"
+          value="7.2 min"
+          variant="default"
+          trend={[9, 8, 10, 7, 8, 6, 7]}
+          trendColor="#2D7A45"
+          micro="↓ 12% from yesterday"
+        />
       </div>
 
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-4">
-          <div className="card overflow-hidden">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-section-label text-tertiary">Active Emergencies</span>
-              <input value={search} onChange={e => setSearch(e.target.value)}
-                className="w-48 border border-border rounded px-3 py-1.5 text-caption bg-surface2 text-primary" placeholder="Search..." />
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-caption">
-                <thead><tr className="border-b border-border">
-                  <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">ID</th>
-                  <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Severity</th>
-                  <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Assigned</th>
-                  <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">ETA</th>
-                  <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Status</th>
-                  <th className="w-20 py-3"></th>
-                </tr></thead>
-                <tbody>
-                  {filtered.filter((e: Emergency) => e.status !== "resolved").slice(0, 6).map((e: Emergency) => (
-                    <tr key={e.id} className="border-b border-border hover:bg-surface2 transition-colors group">
-                      <td className="py-3 pr-3 text-primary">#{e.id}</td>
-                      <td className="py-3 pr-3"><span className="flex items-center gap-1.5"><span className={`w-1.5 h-1.5 rounded-full ${e.severity === "critical" ? "bg-status-red" : e.severity === "high" ? "bg-status-amber" : "bg-status-green"}`} /><span className="text-secondary">{e.severity}</span></span></td>
-                      <td className="py-3 pr-3 text-secondary">AMB-{e.assigned_ambulance_id || "—"}</td>
-                      <td className="py-3 pr-3 text-tertiary">{Math.floor(Math.random() * 10 + 3)} min</td>
-                      <td className="py-3 pr-3 text-secondary capitalize">{e.status}</td>
-                      <td className="py-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={() => setReassignTarget(e)} className="text-caption text-secondary hover:text-primary">Reassign</button>
-                      </td>
-                    </tr>
-                  ))}
-                  {filtered.filter((e: Emergency) => e.status !== "resolved").length === 0 && <tr><td colSpan={6} className="py-8 text-center text-caption text-tertiary">All clear</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <DataTable label="Active Emergencies" search={search} onSearch={setSearch}>
+            <thead>
+              <tr className="border-b border-border dark:border-border-dark">
+                <th className="th">ID</th>
+                <th className="th">Severity</th>
+                <th className="th">Assigned</th>
+                <th className="th">ETA</th>
+                <th className="th">Status</th>
+                <th className="w-20 py-3"/>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.filter((e: Emergency) => e.status !== "resolved").slice(0, 6).map((e: Emergency) => (
+                <tr key={e.id} className="border-b border-border dark:border-border-dark hover:bg-surface2 dark:hover:bg-surface2-dark transition-colors group">
+                  <td className="td text-primary">#{e.id}</td>
+                  <td className="td"><span className="flex items-center gap-1.5"><span className={`w-1.5 h-1.5 rounded-full ${e.severity === "critical" ? "bg-status-red" : e.severity === "high" ? "bg-status-amber" : "bg-status-green"}`} /><span className="text-secondary">{e.severity}</span></span></td>
+                  <td className="td text-secondary">AMB-{e.assigned_ambulance_id || "—"}</td>
+                  <td className="td text-tertiary tabular-nums">{DEMO_ETA[e.id] ?? 8} min</td>
+                  <td className="td text-secondary capitalize">{e.status}</td>
+                  <td className="py-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onClick={() => setReassignTarget(e)} className="text-caption text-secondary hover:text-primary">Reassign</button>
+                  </td>
+                </tr>
+              ))}
+              {filtered.filter((e: Emergency) => e.status !== "resolved").length === 0 && (
+                <tr>
+                  <td colSpan={6}>
+                    <EmptyState
+                      heading="All clear"
+                      subtext="No active emergencies right now"
+                      icon={
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                          <circle cx="11" cy="11" r="8"/>
+                          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                        </svg>
+                      }
+                    />
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </DataTable>
         </div>
 
         <div className="space-y-4">
-          <span className="text-section-label text-tertiary">Alerts Feed</span>
-          <div className="card p-0 divide-y divide-border max-h-[400px] overflow-y-auto">
-            {emergencies.slice(0, 5).map((e: Emergency) => (
-              <AlertItem key={e.id} severity={e.severity === "critical" ? "critical" : e.severity === "high" ? "warning" : "info"} message={`${e.patient_name} — ${e.severity}`} timestamp={relTime(e.created_at)} unread={e.status === "pending"} />
-            ))}
-            {emergencies.length === 0 && <div className="p-8 text-center text-caption text-tertiary">No active alerts</div>}
+          <div className="card p-0">
+            <div className="flex items-center justify-between p-4 border-b border-border dark:border-border-dark">
+              <span className="text-section-label text-tertiary dark:text-tertiary-dark">Alerts feed</span>
+              <button className="text-caption text-tertiary hover:text-primary transition-colors">Mark all read</button>
+            </div>
+            <div className="divide-y divide-border dark:divide-border-dark max-h-[380px] overflow-y-auto">
+              {emergencies.slice(0, 6).map((e: Emergency) => (
+                <AlertItem
+                  key={e.id}
+                  severity={e.severity === "critical" ? "critical" : e.severity === "high" ? "warning" : "info"}
+                  message={`${e.patient_name} — ${e.severity} — ${e.status}`}
+                  timestamp={relTime(e.created_at)}
+                  unread={e.status === "pending"}
+                />
+              ))}
+              {emergencies.length === 0 && (
+                <EmptyState
+                  heading="No active alerts"
+                  subtext="System is operating normally"
+                  icon={
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                      <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+                    </svg>
+                  }
+                />
+              )}
+            </div>
           </div>
 
           <div className="card">
@@ -338,42 +391,54 @@ function EmergenciesView({ emergencies: emergenciesList, load }: any) {
           <select value={sev} onChange={e => setSev(e.target.value)} className="border border-border rounded px-2 py-1 text-caption bg-surface2 text-primary">
             {["all", "critical", "high", "medium", "low"].map(o => <option key={o} value={o}>{o}</option>)}
           </select>
-          <input value={s} onChange={e => setS(e.target.value)} className="w-48 border border-border rounded px-3 py-1.5 text-caption bg-surface2 text-primary" placeholder="Search case ID or location..." />
         </div>
       </div>
-      <div className="card">
-        <div className="overflow-x-auto">
-          <table className="w-full text-caption">
-            <thead><tr className="border-b border-border">
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">ID</th>
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Patient</th>
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Severity</th>
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Location</th>
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Ambulance</th>
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Hospital</th>
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Status</th>
-              <th className="w-20 py-3"></th>
-            </tr></thead>
-            <tbody>
-              {f.map((e: Emergency) => (
-                <tr key={e.id} className="border-b border-border hover:bg-surface2 transition-colors group">
-                  <td className="py-3 pr-3 text-primary">#{e.id}</td>
-                  <td className="py-3 pr-3 text-primary">{e.patient_name}</td>
-                  <td className="py-3 pr-3"><span className="flex items-center gap-1.5"><span className={`w-1.5 h-1.5 rounded-full ${e.severity === "critical" ? "bg-status-red" : e.severity === "high" ? "bg-status-amber" : "bg-status-green"}`} /><span className="text-secondary">{e.severity}</span></span></td>
-                  <td className="py-3 pr-3 text-tertiary">{e.latitude.toFixed(2)}, {e.longitude.toFixed(2)}</td>
-                  <td className="py-3 pr-3 text-secondary">{e.assigned_ambulance_id ? `AMB-${e.assigned_ambulance_id}` : "—"}</td>
-                  <td className="py-3 pr-3 text-secondary">{e.assigned_hospital_id ? `H-${e.assigned_hospital_id}` : "—"}</td>
-                  <td className="py-3 pr-3 text-secondary capitalize">{e.status}</td>
-                  <td className="py-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={async () => { await updateEmergency(e.id, { status: "resolved" } as any); load() }} className="text-caption text-secondary hover:text-primary">Resolve</button>
-                  </td>
-                </tr>
-              ))}
-              {f.length === 0 && <tr><td colSpan={8} className="py-8 text-center text-caption text-tertiary">No matches</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <DataTable search={s} onSearch={setS}>
+        <thead>
+          <tr className="border-b border-border dark:border-border-dark">
+            <th className="th">ID</th>
+            <th className="th">Patient</th>
+            <th className="th">Severity</th>
+            <th className="th">Location</th>
+            <th className="th">Ambulance</th>
+            <th className="th">Hospital</th>
+            <th className="th">Status</th>
+            <th className="w-20 py-3"/>
+          </tr>
+        </thead>
+        <tbody>
+          {f.map((e: Emergency) => (
+            <tr key={e.id} className="border-b border-border dark:border-border-dark hover:bg-surface2 dark:hover:bg-surface2-dark transition-colors group">
+              <td className="td text-primary">#{e.id}</td>
+              <td className="td text-primary">{e.patient_name}</td>
+              <td className="td"><span className="flex items-center gap-1.5"><span className={`w-1.5 h-1.5 rounded-full ${e.severity === "critical" ? "bg-status-red" : e.severity === "high" ? "bg-status-amber" : "bg-status-green"}`} /><span className="text-secondary">{e.severity}</span></span></td>
+              <td className="td text-tertiary">{e.latitude.toFixed(2)}, {e.longitude.toFixed(2)}</td>
+              <td className="td text-secondary">{e.assigned_ambulance_id ? `AMB-${e.assigned_ambulance_id}` : "—"}</td>
+              <td className="td text-secondary">{e.assigned_hospital_id ? `H-${e.assigned_hospital_id}` : "—"}</td>
+              <td className="td text-secondary capitalize">{e.status}</td>
+              <td className="py-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button onClick={async () => { await updateEmergency(e.id, { status: "resolved" } as any); load() }} className="text-caption text-secondary hover:text-primary">Resolve</button>
+              </td>
+            </tr>
+          ))}
+          {f.length === 0 && (
+            <tr>
+              <td colSpan={8}>
+                <EmptyState
+                  heading="No emergencies found"
+                  subtext="Try adjusting your filters"
+                  icon={
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <circle cx="11" cy="11" r="8"/>
+                      <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                  }
+                />
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </DataTable>
     </div>
   )
 }
@@ -382,33 +447,31 @@ function HospitalsView({ hospitals }: any) {
   return (
     <div className="max-w-5xl mx-auto space-y-4">
       <h1 className="text-page-title text-primary">Hospitals</h1>
-      <div className="card">
-        <div className="overflow-x-auto">
-          <table className="w-full text-caption">
-            <thead><tr className="border-b border-border">
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Name</th>
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Beds free</th>
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">ICU free</th>
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Status</th>
-              <th className="w-1/3 py-3"></th>
-            </tr></thead>
-            <tbody>
-              {hospitals.map((h: Hospital) => {
-                const pct = h.total_beds > 0 ? Math.round((h.available_beds / h.total_beds) * 100) : 0
-                return (
-                  <tr key={h.id} className="border-b border-border hover:bg-surface2 transition-colors">
-                    <td className="py-3 pr-3 text-primary">{h.name}</td>
-                    <td className="py-3 pr-3 text-secondary">{h.available_beds}/{h.total_beds}</td>
-                    <td className="py-3 pr-3 text-secondary">{h.available_icu}/{h.total_icu}</td>
-                    <td className="py-3 pr-3"><span className={`micro-tag ${h.status === "active" ? "micro-tag-ok" : h.status === "full" ? "micro-tag-critical" : "micro-tag-warning"}`}>{h.status}</span></td>
-                    <td className="py-3"><div className="h-[2px] bg-border rounded-full"><div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: pct > 30 ? "#2D7A45" : "#B7660A" }} /></div></td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <DataTable>
+        <thead>
+          <tr className="border-b border-border dark:border-border-dark">
+            <th className="th">Name</th>
+            <th className="th">Beds free</th>
+            <th className="th">ICU free</th>
+            <th className="th">Status</th>
+            <th className="w-1/3 py-3"/>
+          </tr>
+        </thead>
+        <tbody>
+          {hospitals.map((h: Hospital) => {
+            const pct = h.total_beds > 0 ? Math.round((h.available_beds / h.total_beds) * 100) : 0
+            return (
+              <tr key={h.id} className="border-b border-border dark:border-border-dark hover:bg-surface2 dark:hover:bg-surface2-dark transition-colors">
+                <td className="td text-primary">{h.name}</td>
+                <td className="td text-secondary">{h.available_beds}/{h.total_beds}</td>
+                <td className="td text-secondary">{h.available_icu}/{h.total_icu}</td>
+                <td className="td"><span className={`micro-tag ${h.status === "active" ? "micro-tag-ok" : h.status === "full" ? "micro-tag-critical" : "micro-tag-warning"}`}>{h.status}</span></td>
+                <td className="py-3"><div className="h-[2px] bg-border rounded-full"><div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: pct > 30 ? "#2D7A45" : "#B7660A" }} /></div></td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </DataTable>
     </div>
   )
 }
@@ -417,28 +480,26 @@ function AmbulancesView({ ambulances }: any) {
   return (
     <div className="max-w-5xl mx-auto space-y-4">
       <h1 className="text-page-title text-primary">Ambulances</h1>
-      <div className="card">
-        <div className="overflow-x-auto">
-          <table className="w-full text-caption">
-            <thead><tr className="border-b border-border">
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Vehicle</th>
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Status</th>
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Location</th>
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Hospital</th>
-            </tr></thead>
-            <tbody>
-              {ambulances.map((a: Ambulance) => (
-                <tr key={a.id} className="border-b border-border hover:bg-surface2 transition-colors">
-                  <td className="py-3 pr-3 text-primary">{a.vehicle_id}</td>
-                  <td className="py-3 pr-3"><span className="flex items-center gap-1.5"><span className={`w-1.5 h-1.5 rounded-full ${a.status === "available" ? "bg-status-green" : a.status === "en_route" ? "bg-status-amber" : "bg-status-red"}`} /><span className="text-secondary">{a.status}</span></span></td>
-                  <td className="py-3 pr-3 text-tertiary">{a.latitude.toFixed(2)}, {a.longitude.toFixed(2)}</td>
-                  <td className="py-3 pr-3 text-secondary">{a.hospital_id ? `H-${a.hospital_id}` : "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <DataTable>
+        <thead>
+          <tr className="border-b border-border dark:border-border-dark">
+            <th className="th">Vehicle</th>
+            <th className="th">Status</th>
+            <th className="th">Location</th>
+            <th className="th">Hospital</th>
+          </tr>
+        </thead>
+        <tbody>
+          {ambulances.map((a: Ambulance) => (
+            <tr key={a.id} className="border-b border-border dark:border-border-dark hover:bg-surface2 dark:hover:bg-surface2-dark transition-colors">
+              <td className="td text-primary">{a.vehicle_id}</td>
+              <td className="td"><span className="flex items-center gap-1.5"><span className={`w-1.5 h-1.5 rounded-full ${a.status === "available" ? "bg-status-green" : a.status === "en_route" ? "bg-status-amber" : "bg-status-red"}`} /><span className="text-secondary">{a.status}</span></span></td>
+              <td className="td text-tertiary">{a.latitude.toFixed(2)}, {a.longitude.toFixed(2)}</td>
+              <td className="td text-secondary">{a.hospital_id ? `H-${a.hospital_id}` : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </DataTable>
     </div>
   )
 }
@@ -456,12 +517,12 @@ function ForecastView(_: any) {
       <div className="card space-y-4">
         <div className="flex gap-6 text-caption">
           <span className="flex items-center gap-2"><svg width="20" height="2" viewBox="0 0 20 2"><line x1="0" y1="1" x2="20" y2="1" stroke="#1A1917" strokeWidth="1.5" /></svg> Actual</span>
-          <span className="flex items-center gap-2"><svg width="20" height="2" viewBox="0 0 20 2"><line x1="0" y1="1" x2="20" y2="1" stroke="#1A1917" strokeWidth="1.5" strokeDasharray="4 2" /></svg> Predicted</span>
+          <span className="flex items-center gap-2"><svg width="20" height="2" viewBox="0 0 20 2"><line x1="0" y1="1" x2="20" y2="1" stroke="#9E9B97" strokeWidth="1.5" strokeDasharray="4 2" /></svg> Predicted</span>
         </div>
         <svg viewBox={`0 0 ${w} ${h + 20}`} className="w-full h-48">
           {[0, 0.25, 0.5, 0.75, 1].map(r => <line key={r} x1="0" y1={h * (1 - r)} x2={w} y2={h * (1 - r)} stroke="#E2E0DC" strokeWidth="1" opacity="0.1" />)}
-          <polyline points={actual.map((v, i) => `${i * sx},${sy(v)}`).join(" ")} fill="none" stroke="#1A1917" strokeWidth="1.5" />
-          <polyline points={predicted.map((v, i) => `${i * sx},${sy(v)}`).join(" ")} fill="none" stroke="#1A1917" strokeWidth="1.5" strokeDasharray="4 3" />
+          <polyline points={actual.map((v, i) => `${i * sx},${sy(v)}`).join(" ")} fill="none" stroke="#1A1917" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          <polyline points={predicted.map((v, i) => `${i * sx},${sy(v)}`).join(" ")} fill="none" stroke="#9E9B97" strokeWidth="1.5" strokeDasharray="4 3" strokeLinecap="round" strokeLinejoin="round"/>
         </svg>
         <div className="grid grid-cols-3 gap-4 text-caption">
           <div><span className="text-tertiary">Peak hour</span><p className="text-primary font-medium">{peakHour}</p></div>
@@ -563,34 +624,32 @@ function AdminStaffView() {
         <h1 className="text-page-title text-primary">Staff Management</h1>
         <button className="px-3 py-1.5 rounded bg-accent dark:bg-primary-dark text-white dark:text-[#0F1117] text-caption hover:opacity-85">Add staff</button>
       </div>
-      <div className="card">
-        <div className="overflow-x-auto">
-          <table className="w-full text-caption">
-            <thead><tr className="border-b border-border">
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Name</th>
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Role</th>
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Hospital</th>
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Status</th>
-              <th className="w-24 py-3"></th>
-            </tr></thead>
-            <tbody>
-              {staff.map((s, i) => (
-                <tr key={i} className="border-b border-border hover:bg-surface2 transition-colors group">
-                  <td className="py-3 pr-3 text-primary">{s.name}</td>
-                  <td className="py-3 pr-3 text-secondary">{s.role}</td>
-                  <td className="py-3 pr-3 text-secondary">{s.hospital}</td>
-                  <td className="py-3 pr-3">
-                    <span className={`micro-tag ${s.status === "Active" ? "micro-tag-ok" : s.status === "On-call" ? "micro-tag-warning" : "micro-tag-default"}`}>{s.status}</span>
-                  </td>
-                  <td className="py-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button className="text-caption text-secondary hover:text-primary">Edit</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <DataTable>
+        <thead>
+          <tr className="border-b border-border dark:border-border-dark">
+            <th className="th">Name</th>
+            <th className="th">Role</th>
+            <th className="th">Hospital</th>
+            <th className="th">Status</th>
+            <th className="w-24 py-3"/>
+          </tr>
+        </thead>
+        <tbody>
+          {staff.map((s, i) => (
+            <tr key={i} className="border-b border-border dark:border-border-dark hover:bg-surface2 dark:hover:bg-surface2-dark transition-colors group">
+              <td className="td text-primary">{s.name}</td>
+              <td className="td text-secondary">{s.role}</td>
+              <td className="td text-secondary">{s.hospital}</td>
+              <td className="td">
+                <span className={`micro-tag ${s.status === "Active" ? "micro-tag-ok" : s.status === "On-call" ? "micro-tag-warning" : "micro-tag-default"}`}>{s.status}</span>
+              </td>
+              <td className="py-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button className="text-caption text-secondary hover:text-primary">Edit</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </DataTable>
     </div>
   )
 }
@@ -730,34 +789,32 @@ function UsersView() {
         <h1 className="text-page-title text-primary">User Management</h1>
         <button className="px-3 py-1.5 rounded bg-accent dark:bg-primary-dark text-white dark:text-[#0F1117] text-caption hover:opacity-85">Add user</button>
       </div>
-      <div className="card">
-        <div className="overflow-x-auto">
-          <table className="w-full text-caption">
-            <thead><tr className="border-b border-border">
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Name</th>
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Role</th>
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Portal</th>
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Status</th>
-              <th className="text-left py-3 pr-3 text-section-label text-tertiary font-medium">Last active</th>
-              <th className="w-24 py-3"></th>
-            </tr></thead>
-            <tbody>
-              {users.map((u, i) => (
-                <tr key={i} className="border-b border-border hover:bg-surface2 transition-colors group">
-                  <td className="py-3 pr-3 text-primary">{u.name}</td>
-                  <td className="py-3 pr-3 text-secondary">{u.role}</td>
-                  <td className="py-3 pr-3 text-secondary">{u.portal}</td>
-                  <td className="py-3 pr-3"><span className="flex items-center gap-1.5"><span className={`w-1.5 h-1.5 rounded-full ${u.status === "Active" ? "bg-status-green" : "bg-status-red"}`} /><span className="text-secondary">{u.status}</span></span></td>
-                  <td className="py-3 pr-3 text-tertiary">{u.last}</td>
-                  <td className="py-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button className="text-caption text-secondary hover:text-primary">Edit</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <DataTable>
+        <thead>
+          <tr className="border-b border-border dark:border-border-dark">
+            <th className="th">Name</th>
+            <th className="th">Role</th>
+            <th className="th">Portal</th>
+            <th className="th">Status</th>
+            <th className="th">Last active</th>
+            <th className="w-24 py-3"/>
+          </tr>
+        </thead>
+        <tbody>
+          {users.map((u, i) => (
+            <tr key={i} className="border-b border-border dark:border-border-dark hover:bg-surface2 dark:hover:bg-surface2-dark transition-colors group">
+              <td className="td text-primary">{u.name}</td>
+              <td className="td text-secondary">{u.role}</td>
+              <td className="td text-secondary">{u.portal}</td>
+              <td className="td"><span className="flex items-center gap-1.5"><span className={`w-1.5 h-1.5 rounded-full ${u.status === "Active" ? "bg-status-green" : "bg-status-red"}`} /><span className="text-secondary">{u.status}</span></span></td>
+              <td className="td text-tertiary">{u.last}</td>
+              <td className="py-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button className="text-caption text-secondary hover:text-primary">Edit</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </DataTable>
     </div>
   )
 }

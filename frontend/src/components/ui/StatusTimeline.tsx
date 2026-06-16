@@ -15,7 +15,7 @@ export default function StatusTimeline({ steps, currentKey, onAdvance, advanceLa
   const currentIdx = steps.findIndex(s => s.key === currentKey)
 
   return (
-    <div className="space-y-0">
+    <div className="space-y-0 pb-3">
       {steps.map((step, i) => {
         const completed = i < currentIdx
         const current = i === currentIdx
@@ -37,16 +37,16 @@ export default function StatusTimeline({ steps, currentKey, onAdvance, advanceLa
                 {step.label}
               </p>
               {step.timestamp && <p className="text-caption text-tertiary dark:text-tertiary-dark">{step.timestamp}</p>}
-              {current && onAdvance && (
-                <button onClick={onAdvance}
-                  className="mt-1 text-caption bg-accent dark:bg-primary-dark text-white dark:text-[#0F1117] px-3 py-1 rounded hover:opacity-85 active:scale-[0.98] transition-all duration-150">
-                  {advanceLabel}
-                </button>
-              )}
             </div>
           </div>
         )
       })}
+      {onAdvance && (
+        <button onClick={onAdvance}
+          className="w-full h-[44px] rounded bg-accent dark:bg-primary-dark text-white dark:text-[#0F1117] text-body font-medium hover:opacity-85 active:scale-[0.98] transition-all duration-150">
+          {advanceLabel}
+        </button>
+      )}
     </div>
   )
 }

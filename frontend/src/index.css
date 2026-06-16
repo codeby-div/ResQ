@@ -110,4 +110,24 @@
   .micro-tag-info {
     @apply micro-tag text-[#1D6FA8] bg-[#E8F1FA];
   }
+
+  .th {
+    @apply text-left py-3 pr-3 font-medium text-[11px] uppercase tracking-[0.06em] text-[#9E9B97] dark:text-[#5C6278];
+  }
+
+  .td {
+    @apply py-[10px] pr-3 border-b border-[#E2E0DC] dark:border-[#2E3348] text-[13px];
+  }
+
+  .form-input {
+    @apply w-full h-[44px] rounded-lg border border-[#E2E0DC] dark:border-[#2E3348] bg-[#F0EFED] dark:bg-[#22263A] px-3 text-[13px] text-[#1A1917] dark:text-[#F0F1F3] focus:border-[#6B6966] outline-none transition-colors duration-150;
+  }
+
+  .btn-primary {
+    @apply h-[44px] rounded-lg bg-[#1A1917] dark:bg-[#F0F1F3] text-white dark:text-[#0F1117] text-[13px] font-medium px-4 hover:opacity-85 active:scale-[0.98] transition-all duration-150;
+  }
+
+  .btn-ghost {
+    @apply h-[44px] rounded-lg border border-[#E2E0DC] dark:border-[#2E3348] bg-transparent text-[13px] text-[#6B6966] dark:text-[#9EA3B5] px-4 hover:text-[#1A1917] dark:hover:text-[#F0F1F3] active:scale-[0.98] transition-all duration-150;
+  }
 }

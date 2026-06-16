@@ -122,3 +122,33 @@ class TrackingResponse(BaseModel):
     route: list[dict] = []
     emergency_lat: float
     emergency_lng: float
+
+
+class NotificationCreate(BaseModel):
+    user_id: Optional[int] = None
+    emergency_id: Optional[int] = None
+    title: str
+    body: str
+    type: str = "info"
+    channel: str = "in_app"
+
+
+class NotificationResponse(BaseModel):
+    id: int
+    user_id: Optional[int] = None
+    emergency_id: Optional[int] = None
+    title: str
+    body: str
+    type: str
+    channel: str
+    read: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class EmergencyCreate(EmergencyBase):
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    push_token: Optional[str] = None

@@ -59,6 +59,8 @@ export interface EmergencyFormData {
   latitude: number
   longitude: number
   severity: "low" | "medium" | "high" | "critical"
+  phone?: string
+  email?: string
 }
 
 export interface Hotspot {
@@ -86,4 +88,16 @@ export interface TrackingInfo {
   route: { lat: number; lng: number }[]
   emergency_lat: number
   emergency_lng: number
+}
+
+export interface NotificationItem {
+  id: number
+  user_id: number | null
+  emergency_id: number | null
+  title: string
+  body: string
+  type: string
+  channel: string
+  read: number
+  created_at: string
 }
