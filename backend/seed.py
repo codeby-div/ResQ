@@ -15,13 +15,13 @@ hospitals_data = [
 ]
 
 ambulances_data = [
-    {"id": 1, "vehicle_id": "AMB-001", "latitude": 28.5800, "longitude": 77.2200, "status": AmbulanceStatus.AVAILABLE, "hospital_id": 1},
-    {"id": 2, "vehicle_id": "AMB-002", "latitude": 28.5500, "longitude": 77.2000, "status": AmbulanceStatus.EN_ROUTE, "hospital_id": 1},
-    {"id": 3, "vehicle_id": "AMB-003", "latitude": 19.0900, "longitude": 72.8900, "status": AmbulanceStatus.AVAILABLE, "hospital_id": 2},
-    {"id": 4, "vehicle_id": "AMB-004", "latitude": 19.0600, "longitude": 72.8600, "status": AmbulanceStatus.BUSY, "hospital_id": 2},
-    {"id": 5, "vehicle_id": "AMB-005", "latitude": 13.1000, "longitude": 80.2800, "status": AmbulanceStatus.AVAILABLE, "hospital_id": 3},
-    {"id": 6, "vehicle_id": "AMB-006", "latitude": 12.9600, "longitude": 77.5800, "status": AmbulanceStatus.AVAILABLE, "hospital_id": 4},
-    {"id": 7, "vehicle_id": "AMB-007", "latitude": 18.5300, "longitude": 73.8700, "status": AmbulanceStatus.EN_ROUTE, "hospital_id": 6},
+    {"id": 1, "vehicle_id": "AMB-001", "latitude": 28.5800, "longitude": 77.2200, "status": AmbulanceStatus.AVAILABLE, "hospital_id": 1, "driver_name": "Rajesh Kumar", "driver_phone": "9876543210"},
+    {"id": 2, "vehicle_id": "AMB-002", "latitude": 28.5500, "longitude": 77.2000, "status": AmbulanceStatus.EN_ROUTE, "hospital_id": 1, "driver_name": "Suresh Singh", "driver_phone": "9876543211"},
+    {"id": 3, "vehicle_id": "AMB-003", "latitude": 19.0900, "longitude": 72.8900, "status": AmbulanceStatus.AVAILABLE, "hospital_id": 2, "driver_name": "Manoj Patil", "driver_phone": "9876543212"},
+    {"id": 4, "vehicle_id": "AMB-004", "latitude": 19.0600, "longitude": 72.8600, "status": AmbulanceStatus.BUSY, "hospital_id": 2, "driver_name": "Vijay Sharma", "driver_phone": "9876543213"},
+    {"id": 5, "vehicle_id": "AMB-005", "latitude": 13.1000, "longitude": 80.2800, "status": AmbulanceStatus.AVAILABLE, "hospital_id": 3, "driver_name": "Arun Kumar", "driver_phone": "9876543214"},
+    {"id": 6, "vehicle_id": "AMB-006", "latitude": 12.9600, "longitude": 77.5800, "status": AmbulanceStatus.AVAILABLE, "hospital_id": 4, "driver_name": "Karthik Rajan", "driver_phone": "9876543215"},
+    {"id": 7, "vehicle_id": "AMB-007", "latitude": 18.5300, "longitude": 73.8700, "status": AmbulanceStatus.EN_ROUTE, "hospital_id": 6, "driver_name": "Rohan Deshmukh", "driver_phone": "9876543216"},
 ]
 
 emergencies_data = [

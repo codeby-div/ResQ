@@ -5,6 +5,7 @@ import PatientPortal from "./pages/PatientPortal"
 import AmbulancePortal from "./pages/AmbulancePortal"
 import HospitalPortal from "./pages/HospitalPortal"
 import AdminPortal from "./pages/AdminPortal"
+import MapPage from "./pages/MapPage"
 import ToastContainer from "./components/Toast"
 import { initNotificationListeners } from "./services/notifications"
 
@@ -22,6 +23,7 @@ export default function App() {
         <Route path="/ambulance" element={<AmbulancePortal />} />
         <Route path="/hospital" element={<HospitalPortal />} />
         <Route path="/admin" element={<AdminPortal />} />
+        <Route path="/map" element={<MapPage />} />
       </Routes>
     </BrowserRouter>
   )

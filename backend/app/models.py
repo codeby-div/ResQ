@@ -56,6 +56,8 @@ class Ambulance(Base):
     longitude = Column(Float, nullable=False)
     status = Column(SAEnum(AmbulanceStatus), default=AmbulanceStatus.AVAILABLE)
     hospital_id = Column(Integer, ForeignKey("hospitals.id"), nullable=True)
+    driver_name = Column(String(255), nullable=True)
+    driver_phone = Column(String(20), nullable=True)
 
     hospital = relationship("Hospital", back_populates="ambulances")
 

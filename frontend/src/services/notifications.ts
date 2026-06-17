@@ -5,7 +5,7 @@ import type { TrackingInfo } from "../types"
 export function initNotificationListeners() {
   const socket = getSocket()
 
-  socket.on("tracking_update", (data: TrackingInfo & { emergency_id: number }) => {
+   socket.on("tracking_update", (_data: TrackingInfo & { emergency_id: number }) => {
     // Handled by individual component callbacks
   })
 

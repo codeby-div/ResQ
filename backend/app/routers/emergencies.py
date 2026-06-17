@@ -64,6 +64,8 @@ def _simulate_tracking(emergency_id: int, amb: Ambulance, emergency: Emergency):
         "amb_start_lng": lng_start,
         "emergency": {"lat": lat_end, "lng": lng_end},
         "ambulance_vehicle_id": amb.vehicle_id,
+        "driver_name": amb.driver_name,
+        "driver_phone": amb.driver_phone,
         "running": True,
     }
 
@@ -85,6 +87,8 @@ def _simulate_tracking(emergency_id: int, amb: Ambulance, emergency: Emergency):
                 "ambulance_lat": round(lat, 6),
                 "ambulance_lng": round(lng, 6),
                 "ambulance_vehicle_id": amb.vehicle_id,
+                "driver_name": amb.driver_name,
+                "driver_phone": amb.driver_phone,
                 "status": "dispatched" if progress < 1 else "resolved",
                 "eta_seconds": eta,
                 "progress_pct": round(progress * 100, 1),
@@ -372,6 +376,8 @@ def track_emergency(emergency_id: int, db: Session = Depends(get_db)):
         amb = db.query(Ambulance).filter(Ambulance.id == emergency.assigned_ambulance_id).first()
         if amb:
             resp.ambulance_vehicle_id = amb.vehicle_id
+            resp.driver_name = amb.driver_name
+            resp.driver_phone = amb.driver_phone
             total_trip = 600
             import hashlib
             seed_str = f"{emergency.id}-{amb.id}"

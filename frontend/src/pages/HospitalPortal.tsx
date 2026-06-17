@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
 import { fetchHospitals, fetchEmergencies, updateEmergency, updateHospital } from "../services/api"
+import ResQLogo from "../components/ui/ResQLogo"
 import { demoHospitals } from "../services/demoData"
 import { subscribeAllEmergencies, unsubscribeAllEmergencies } from "../services/socket"
 import { onEmergencyUpdate } from "../services/notifications"
@@ -74,13 +75,13 @@ export default function HospitalPortal() {
       <nav className="flex-1 py-4 overflow-y-auto">
         {nav.map(s => (
           <div key={s.label} className="mb-5">
-            <p className="px-4 mb-2 text-section-label text-tertiary dark:text-tertiary-dark">{s.label}</p>
+            <p className="px-4 mb-2 text-section-label text-tertiary ">{s.label}</p>
             {s.items.map(item => (
               <button key={item.key} onClick={() => { setView(item.key); setSidebarOpen(false) }}
                 className={`w-full flex items-center gap-3 px-4 py-2 text-body transition-colors duration-100 ${
                   view === item.key
-                    ? "border-l-2 border-accent dark:border-primary-dark text-primary dark:text-primary-dark font-medium"
-                    : "border-l-2 border-transparent text-tertiary dark:text-tertiary-dark hover:bg-surface dark:hover:bg-surface-dark hover:text-primary dark:hover:text-primary-dark"
+                    ? "border-l-2 border-accent dark:border-primary-dark text-primary  font-medium"
+                    : "border-l-2 border-transparent text-tertiary  hover:bg-surface dark:hover:bg-surface-dark hover:text-primary dark:hover:text-primary-dark"
                 }`}>
                 {item.label}
               </button>
@@ -91,8 +92,8 @@ export default function HospitalPortal() {
       <div className="p-4 border-t border-border dark:border-border-dark flex items-center gap-3">
         <div className="w-7 h-7 rounded-full bg-surface2 dark:bg-surface2-dark flex items-center justify-center text-caption font-medium">NH</div>
         <div className="flex-1 min-w-0">
-          <p className="text-caption font-medium text-primary dark:text-primary-dark truncate">Nurse Harper</p>
-          <p className="text-caption text-tertiary dark:text-tertiary-dark truncate">ER Staff</p>
+          <p className="text-caption font-medium text-primary  truncate">Nurse Harper</p>
+          <p className="text-caption text-tertiary  truncate">ER Staff</p>
         </div>
       </div>
     </aside>
@@ -100,18 +101,27 @@ export default function HospitalPortal() {
 
   const Header = () => (
     <header className="h-[52px] bg-white dark:bg-surface-dark border-b border-border dark:border-border-dark flex items-center justify-between px-4 shrink-0">
-      <div className="flex items-center gap-3">
-        <button onClick={() => navigate("/")} className="text-secondary hover:text-primary transition-colors text-sm mr-1" title="Back to role selection">&larr;</button>
-        <button onClick={() => setSidebarOpen(!sidebarOpen)} className="lg:hidden text-secondary dark:text-secondary-dark" aria-label="Toggle sidebar">
+      <div className="flex items-center gap-4">
+        <button onClick={() => navigate("/")}
+          className="flex items-center justify-center w-9 h-9 rounded-lg text-secondary hover:text-primary hover:bg-surface2 dark:hover:bg-surface2-dark transition-colors"
+          aria-label="Back to role selection"
+          title="Back to role selection">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M19 12H5M12 19l-7-7 7-7"/>
+          </svg>
+        </button>
+        <button onClick={() => setSidebarOpen(!sidebarOpen)} className="lg:hidden text-secondary" aria-label="Toggle sidebar">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" /></svg>
         </button>
-        <span className="text-[18px] font-medium text-status-red">+</span>
-        <span className="text-[15px] font-medium text-primary dark:text-primary-dark">ResQ</span>
-        <span className="hidden sm:block text-caption text-tertiary dark:text-tertiary-dark ml-2">/ {view.replace(/([A-Z])/g, " $1").trim()}</span>
+        <div className="flex items-center gap-2">
+          <ResQLogo size={22} />
+          <span className="text-[15px] font-medium text-primary">ResQ</span>
+        </div>
+        <span className="hidden sm:block text-caption text-tertiary ml-2">/ {view.replace(/([A-Z])/g, " $1").trim()}</span>
       </div>
       <div className="flex items-center gap-3">
         <select value={selectedId} onChange={e => setSelectedId(Number(e.target.value))}
-          className="text-caption bg-surface2 dark:bg-surface2-dark border border-border dark:border-border-dark rounded px-2 py-1 text-primary dark:text-primary-dark">
+          className="text-caption bg-surface2 dark:bg-surface2-dark border border-border dark:border-border-dark rounded px-2 py-1 text-primary ">
           {hospitals.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
         </select>
       </div>
@@ -147,7 +157,7 @@ export default function HospitalPortal() {
 function DashboardView({ h, incoming, emergencies, hospitals, bedPct, relTime }: any) {
   return (
     <div className="max-w-7xl mx-auto space-y-6">
-      <h1 className="text-page-title text-primary dark:text-primary-dark">{h.name}</h1>
+      <h1 className="text-page-title text-primary ">{h.name}</h1>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
           label="General beds free"
@@ -235,7 +245,7 @@ function DashboardView({ h, incoming, emergencies, hospitals, bedPct, relTime }:
         <div className="space-y-4">
           <div className="card p-0">
             <div className="flex items-center justify-between p-4 border-b border-border dark:border-border-dark">
-              <span className="text-section-label text-tertiary dark:text-tertiary-dark">Alerts feed</span>
+              <span className="text-section-label text-tertiary ">Alerts feed</span>
               <button className="text-caption text-tertiary hover:text-primary transition-colors">Mark all read</button>
             </div>
             <div className="divide-y divide-border dark:divide-border-dark max-h-[380px] overflow-y-auto">

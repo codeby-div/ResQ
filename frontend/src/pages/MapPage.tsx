@@ -1,9 +1,11 @@
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMapEvents } from "react-leaflet"
 import L from "leaflet"
 import "leaflet/dist/leaflet.css"
 import { fetchHospitals, fetchAmbulances, fetchEmergencies, createEmergency } from "../services/api"
 import { demoHospitals, demoAmbulances } from "../services/demoData"
+import { subscribeAllEmergencies, unsubscribeAllEmergencies } from "../services/socket"
+import { onEmergencyUpdate } from "../services/notifications"
 import type { Hospital, Ambulance, Emergency, EmergencyFormData } from "../types"
 import EmergencyForm from "../components/EmergencyForm"
 import EmptyState from "../components/ui/EmptyState"
@@ -47,7 +49,27 @@ export default function MapPage() {
     } catch { setHospitals(demoHospitals); setAmbulances(demoAmbulances) }
   }, [])
 
-  useEffect(() => { loadData(); const i = setInterval(loadData, 10000); return () => clearInterval(i) }, [loadData])
+  // Initial load
+  useEffect(() => { loadData() }, [loadData])
+
+  // WebSocket real-time emergency updates
+  const emergenciesRef = useRef(emergencies)
+  emergenciesRef.current = emergencies
+  useEffect(() => {
+    subscribeAllEmergencies()
+    const cleanup = onEmergencyUpdate((data: any) => {
+      const idx = emergenciesRef.current.findIndex((e: Emergency) => e.id === data.emergency_id)
+      if (idx >= 0) {
+        setEmergencies(prev => prev.map(e => e.id === data.emergency_id ? { ...e, ...data } : e))
+      } else {
+        loadData()
+      }
+    })
+    return () => { cleanup(); unsubscribeAllEmergencies() }
+  }, [loadData])
+
+  // Background fallback poll (30s)
+  useEffect(() => { const i = setInterval(loadData, 30000); return () => clearInterval(i) }, [loadData])
 
   const handleFormSubmit = async (data: EmergencyFormData) => {
     try { await createEmergency(data); setShowForm(null); loadData() } catch { console.error("Failed") }
@@ -101,7 +123,7 @@ export default function MapPage() {
 
       <div className="flex-1 relative">
         <MapContainer center={[20.5937, 78.9629]} zoom={5} className="h-full w-full">
-          <TileLayer attribution='&copy; OpenStreetMap' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+          <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
           <MapClickHandler onClick={(lat, lng) => setShowForm({ lat, lng })} />
 
           {showHospitals && hospitals.map(h => (

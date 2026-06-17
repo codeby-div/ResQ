@@ -1,8 +1,10 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from "react-leaflet"
 import L from "leaflet"
 import "leaflet/dist/leaflet.css"
 import { createEmergency, fetchEmergencies } from "../services/api"
+import { subscribeAllEmergencies, unsubscribeAllEmergencies } from "../services/socket"
+import { onEmergencyUpdate } from "../services/notifications"
 import type { Emergency, EmergencyFormData } from "../types"
 
 const severityColors: Record<string, string> = {
@@ -25,7 +27,27 @@ export default function UserPortal() {
     try { setEmergencies(await fetchEmergencies()) } catch { /* ignore */ }
   }, [])
 
-  useEffect(() => { load(); const i = setInterval(load, 8000); return () => clearInterval(i) }, [load])
+  // Initial load
+  useEffect(() => { load() }, [load])
+
+  // WebSocket real-time emergency updates
+  const emergenciesRef = useRef(emergencies)
+  emergenciesRef.current = emergencies
+  useEffect(() => {
+    subscribeAllEmergencies()
+    const cleanup = onEmergencyUpdate((data: any) => {
+      const idx = emergenciesRef.current.findIndex((e: Emergency) => e.id === data.emergency_id)
+      if (idx >= 0) {
+        setEmergencies(prev => prev.map(e => e.id === data.emergency_id ? { ...e, ...data } : e))
+      } else {
+        load()
+      }
+    })
+    return () => { cleanup(); unsubscribeAllEmergencies() }
+  }, [load])
+
+  // Background fallback poll (30s)
+  useEffect(() => { const i = setInterval(load, 30000); return () => clearInterval(i) }, [load])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -94,7 +116,7 @@ export default function UserPortal() {
 
       <div className="flex-1">
         <MapContainer center={[20.5937, 78.9629]} zoom={5} className="h-full w-full">
-          <TileLayer attribution='&copy; OpenStreetMap' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+          <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
           <ClickHandler onClick={(lat, lng) => setShowForm({ lat, lng })} />
           {emergencies.map(e => (
             <Marker key={e.id} position={[e.latitude, e.longitude]}

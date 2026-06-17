@@ -45,3 +45,9 @@ def update_ambulance(ambulance_id: int, data: AmbulanceUpdate, db: Session = Dep
     db.commit()
     db.refresh(ambulance)
     return ambulance
+
+
+@router.get("/verify/{vehicle_no}")
+def verify_ambulance(vehicle_no: str, db: Session = Depends(get_db)):
+    ambulance = db.query(Ambulance).filter(Ambulance.vehicle_id == vehicle_no).first()
+    return {"registered": ambulance is not None}

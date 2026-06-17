@@ -1,11 +1,12 @@
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet"
 import L from "leaflet"
 import "leaflet/dist/leaflet.css"
-import { createEmergency, fetchEmergencies } from "../services/api"
+import ResQLogo from "../components/ui/ResQLogo"
+import { createEmergency, fetchEmergencies, fetchHospitals } from "../services/api"
 import { joinTracking, leaveTracking } from "../services/socket"
-import { onTrackingUpdate, onEmergencyUpdate } from "../services/notifications"
+import { onTrackingUpdate } from "../services/notifications"
 import type { Emergency, EmergencyFormData, TrackingInfo } from "../types"
 import StatusTimeline from "../components/ui/StatusTimeline"
 import EmptyState from "../components/ui/EmptyState"
@@ -51,14 +52,52 @@ function formatEta(seconds: number | null) {
   return `${m}:${s.toString().padStart(2, "0")}`
 }
 
+function NearbyHospitalsCard({ lat, lng, hospitals }: { lat: number; lng: number; hospitals: any[] }) {
+  const sorted = [...hospitals]
+    .map(h => ({
+      ...h,
+      distance: Math.sqrt(
+        Math.pow(h.latitude - lat, 2) + Math.pow(h.longitude - lng, 2)
+      ) * 111
+    }))
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, 3)
+
+  return (
+    <div className="card">
+      <span className="text-section-label text-tertiary">Nearby hospitals</span>
+      <div className="mt-3 space-y-2">
+        {sorted.map((h: any) => (
+          <div key={h.id}
+            className="flex items-center justify-between py-2 border-b border-border dark:border-border-dark last:border-0">
+            <div>
+              <p className="text-body text-primary">{h.name}</p>
+              <p className="text-caption text-tertiary">
+                {h.distance.toFixed(1)} km away
+              </p>
+            </div>
+            <span className={`micro-tag ${
+              h.available_beds > 10 ? "micro-tag-ok" :
+              h.available_beds > 0  ? "micro-tag-warning" :
+                                       "micro-tag-critical"
+            }`}>
+              {h.available_beds} beds free
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function TrackMap({ tracking }: { tracking: TrackingInfo | null }) {
   if (!tracking) return null
   const routePositions: [number, number][] = tracking.route.map(p => [p.lat, p.lng])
 
   return (
     <div className="rounded-xl overflow-hidden border border-border dark:border-border-dark" style={{ height: 280 }}>
-      <MapContainer center={[tracking.emergency_lat, tracking.emergency_lng]} zoom={13} className="h-full w-full" zoomControl={false}>
-        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+      <MapContainer center={[tracking.emergency_lat, tracking.emergency_lng]} zoom={13} className="h-full w-full">
+        <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
         <MapUpdater tracking={tracking} />
 
         <Marker position={[tracking.emergency_lat, tracking.emergency_lng]} icon={patientIcon}>
@@ -89,14 +128,19 @@ export default function PatientPortal() {
   const [severity, setSeverity] = useState<EmergencyFormData["severity"]>("medium")
   const [phone, setPhone] = useState("")
   const [email, setEmail] = useState("")
+  const [age, setAge] = useState("")
   const [lat, setLat] = useState<number | null>(null)
   const [lng, setLng] = useState<number | null>(null)
   const [submitted, setSubmitted] = useState<number | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [showSuccess, setShowSuccess] = useState(false)
+  const [hospitalsList, setHospitalsList] = useState<Emergency["id"] extends never ? any[] : any[]>([])
 
   const load = useCallback(async () => {
-    try { setEmergencies(await fetchEmergencies()) } catch { /* ignore */ }
+    try {
+      setEmergencies(await fetchEmergencies())
+      setHospitalsList(await fetchHospitals())
+    } catch { /* ignore */ }
   }, [])
 
   useEffect(() => { load(); const i = setInterval(load, 8000); return () => clearInterval(i) }, [load])
@@ -117,6 +161,8 @@ export default function PatientPortal() {
           ambulance_lat: data.ambulance_lat,
           ambulance_lng: data.ambulance_lng,
           ambulance_vehicle_id: data.ambulance_vehicle_id,
+          driver_name: data.driver_name,
+          driver_phone: data.driver_phone,
           status: data.status,
           eta_seconds: data.eta_seconds,
           progress_pct: data.progress_pct,
@@ -143,11 +189,28 @@ export default function PatientPortal() {
 
   useEffect(() => { getLocation() }, [])
 
+  const isValidPhone = (v: string) => /^[0-9]{10}$/.test(v.trim())
+  const isValidAge = (v: string) => {
+    const n = Number(v)
+    return v.trim() !== "" && !isNaN(n) && n > 0 && n <= 120
+  }
+
   const validate = () => {
     const errs: Record<string, string> = {}
     if (!name.trim()) errs.name = "Required"
     if (!desc.trim()) errs.desc = "Required"
     if (lat === null || lng === null) errs.location = "Location not available"
+
+    if (!phone.trim()) {
+      errs.phone = "Phone number is required"
+    } else if (!isValidPhone(phone)) {
+      errs.phone = "Enter a valid 10-digit phone number"
+    }
+
+    if (!age || !isValidAge(age)) {
+      errs.age = "Enter a valid age"
+    }
+
     setErrors(errs)
     return Object.keys(errs).length === 0
   }
@@ -192,12 +255,21 @@ export default function PatientPortal() {
   return (
     <div className="min-h-screen bg-page dark:bg-[#0F1117] pb-20">
       <header className="sticky top-0 z-10 bg-white dark:bg-surface-dark border-b border-border dark:border-border-dark px-4 h-[52px] flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <button onClick={() => navigate("/")} className="text-secondary hover:text-primary transition-colors text-sm mr-1" title="Back to role selection">&larr;</button>
-          <span className="text-[18px] font-medium text-status-red">+</span>
-          <span className="text-[15px] font-medium text-primary dark:text-primary-dark">ResQ</span>
+        <div className="flex items-center gap-4">
+          <button onClick={() => navigate("/")}
+            className="flex items-center justify-center w-9 h-9 rounded-lg text-secondary hover:text-primary hover:bg-surface2 dark:hover:bg-surface2-dark transition-colors"
+            aria-label="Back to role selection"
+            title="Back to role selection">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M19 12H5M12 19l-7-7 7-7"/>
+            </svg>
+          </button>
+          <div className="flex items-center gap-2">
+            <ResQLogo size={22} />
+            <span className="text-[15px] font-medium text-primary">ResQ</span>
+          </div>
         </div>
-        <span className="text-caption text-tertiary dark:text-tertiary-dark">Patient</span>
+        <span className="text-caption text-tertiary">Patient</span>
       </header>
 
       <div className="p-4 space-y-4">
@@ -223,26 +295,34 @@ export default function PatientPortal() {
 
         {tab === "report" ? (
           <div className="card space-y-4">
-            <h1 className="text-page-title text-primary dark:text-primary-dark">Report Emergency</h1>
-            <p className="text-caption text-tertiary dark:text-tertiary-dark">Fill in the details below to request help.</p>
+            <h1 className="text-page-title text-primary ">Report Emergency</h1>
+            <p className="text-caption text-tertiary ">Fill in the details below to request help.</p>
 
             <div>
-              <label className="text-section-label text-tertiary dark:text-tertiary-dark">Patient Name</label>
+              <label className="text-section-label text-tertiary ">Patient Name</label>
               <input value={name} onChange={e => { setName(e.target.value); setErrors(p => ({ ...p, name: "" })) }}
-                className={`mt-1.5 w-full h-[44px] rounded border bg-surface2 dark:bg-surface2-dark px-3 text-body text-primary dark:text-primary-dark focus:border-secondary transition-colors ${errors.name ? "border-status-red" : "border-border dark:border-border-dark"}`}
+                className={`mt-1.5 w-full h-[44px] rounded border bg-surface2 dark:bg-surface2-dark px-3 text-body text-primary  focus:border-secondary transition-colors ${errors.name ? "border-status-red" : "border-border dark:border-border-dark"}`}
                 placeholder="Full name" />
               {errors.name && <p className="text-caption text-status-red mt-1">{errors.name}</p>}
             </div>
 
             <div>
-              <label className="text-section-label text-tertiary dark:text-tertiary-dark">Severity</label>
+              <label className="text-section-label text-tertiary ">Age</label>
+              <input type="number" value={age} onChange={e => { setAge(e.target.value); setErrors(p => ({ ...p, age: "" })) }}
+                className={`mt-1.5 w-full h-[44px] rounded border bg-surface2 dark:bg-surface2-dark px-3 text-body text-primary  focus:border-secondary transition-colors ${errors.age ? "border-status-red" : "border-border dark:border-border-dark"}`}
+                placeholder="Enter age" min="1" max="120" />
+              {errors.age && <p className="text-caption text-status-red mt-1">{errors.age}</p>}
+            </div>
+
+            <div>
+              <label className="text-section-label text-tertiary ">Severity</label>
               <div className="flex gap-2 mt-1.5">
                 {severities.map(s => (
                   <button key={s.value} onClick={() => setSeverity(s.value as EmergencyFormData["severity"])}
                     className={`min-tap flex-1 rounded text-caption transition-all duration-150 ${
                       severity === s.value
                         ? `${s.dot} text-white`
-                        : "border border-border dark:border-border-dark text-secondary dark:text-secondary-dark"
+                        : "border border-border dark:border-border-dark text-secondary "
                     }`}>
                     {s.label}
                   </button>
@@ -251,31 +331,37 @@ export default function PatientPortal() {
             </div>
 
             <div>
-              <label className="text-section-label text-tertiary dark:text-tertiary-dark">Description</label>
+              <label className="text-section-label text-tertiary ">Description</label>
               <textarea value={desc} onChange={e => { setDesc(e.target.value); setErrors(p => ({ ...p, desc: "" })) }}
                 rows={4}
-                className={`mt-1.5 w-full rounded border bg-surface2 dark:bg-surface2-dark px-3 py-2 text-body text-primary dark:text-primary-dark focus:border-secondary transition-colors ${errors.desc ? "border-status-red" : "border-border dark:border-border-dark"}`}
+                className={`mt-1.5 w-full rounded border bg-surface2 dark:bg-surface2-dark px-3 py-2 text-body text-primary  focus:border-secondary transition-colors ${errors.desc ? "border-status-red" : "border-border dark:border-border-dark"}`}
                 placeholder="Describe the situation..." />
               {errors.desc && <p className="text-caption text-status-red mt-1">{errors.desc}</p>}
             </div>
 
             <div>
-              <label className="text-section-label text-tertiary dark:text-tertiary-dark">Phone (for SMS alerts)</label>
-              <input value={phone} onChange={e => setPhone(e.target.value)}
-                className="mt-1.5 w-full h-[44px] rounded border border-border dark:border-border-dark bg-surface2 dark:bg-surface2-dark px-3 text-body text-primary dark:text-primary-dark"
-                placeholder="+91 98765 43210" type="tel" />
+              <label className="text-section-label text-tertiary ">Phone number *</label>
+              <input value={phone} onChange={e => {
+                const digitsOnly = e.target.value.replace(/\D/g, "").slice(0, 10)
+                setPhone(digitsOnly)
+                setErrors(p => ({ ...p, phone: "" }))
+              }}
+                className={`mt-1.5 w-full h-[44px] rounded border bg-surface2 dark:bg-surface2-dark px-3 text-body text-primary  focus:border-secondary transition-colors ${errors.phone ? "border-status-red" : "border-border dark:border-border-dark"}`}
+                placeholder="10-digit mobile number" type="tel" maxLength={10} />
+              {errors.phone && <p className="text-caption text-status-red mt-1">{errors.phone}</p>}
+              <p className="text-caption text-tertiary mt-1">Required for SMS dispatch updates</p>
             </div>
 
             <div>
-              <label className="text-section-label text-tertiary dark:text-tertiary-dark">Email (for email alerts)</label>
+              <label className="text-section-label text-tertiary ">Email (optional)</label>
               <input value={email} onChange={e => setEmail(e.target.value)}
-                className="mt-1.5 w-full h-[44px] rounded border border-border dark:border-border-dark bg-surface2 dark:bg-surface2-dark px-3 text-body text-primary dark:text-primary-dark"
+                className="mt-1.5 w-full h-[44px] rounded border border-border dark:border-border-dark bg-surface2 dark:bg-surface2-dark px-3 text-body text-primary "
                 placeholder="patient@example.com" type="email" />
             </div>
 
-            <div className="flex items-center justify-between text-caption text-tertiary dark:text-tertiary-dark">
+            <div className="flex items-center justify-between text-caption text-tertiary ">
               <span>{lat && lng ? `📍 ${lat.toFixed(4)}, ${lng.toFixed(4)}` : "📍 Detecting location..."}</span>
-              <button onClick={getLocation} className="text-accent dark:text-primary-dark underline">Refresh</button>
+              <button onClick={getLocation} className="text-accent  underline">Refresh</button>
             </div>
             {errors.location && <p className="text-caption text-status-red">{errors.location}</p>}
 
@@ -287,7 +373,7 @@ export default function PatientPortal() {
         ) : (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <h1 className="text-page-title text-primary dark:text-primary-dark">Track Status</h1>
+              <h1 className="text-page-title text-primary ">Track Status</h1>
               {tracking && tracking.status === "dispatched" && (
                 <div className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-status-green animate-pulse-ring" />
@@ -304,8 +390,39 @@ export default function PatientPortal() {
                   <TrackMap tracking={tracking} />
                 )}
 
+                {tracking && tracking.status === "dispatched" && (
+                  <div className="card flex items-center justify-between">
+                    <div>
+                      <p className="text-section-label text-tertiary">
+                        Your ambulance driver
+                      </p>
+                      <p className="text-body font-medium text-primary mt-1">
+                        {tracking.driver_name || "Driver"} ·{" "}
+                        {tracking.ambulance_vehicle_id || "Unit"}
+                      </p>
+                    </div>
+                    {tracking.driver_phone && (
+                      <a href={`tel:${tracking.driver_phone}`}
+                        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-status-green text-white text-caption font-medium hover:opacity-85 transition-opacity">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+                        </svg>
+                        Call driver
+                      </a>
+                    )}
+                  </div>
+                )}
+
+                {tracking && (
+                  <NearbyHospitalsCard
+                    lat={tracking.emergency_lat}
+                    lng={tracking.emergency_lng}
+                    hospitals={hospitalsList}
+                  />
+                )}
+
                 <div className="card space-y-4">
-                  <h2 className="text-[15px] font-medium text-primary dark:text-primary-dark">Status</h2>
+                  <h2 className="text-[15px] font-medium text-primary ">Status</h2>
 
                   {tracking && tracking.status === "dispatched" && (
                     <div className="space-y-2">
@@ -313,9 +430,9 @@ export default function PatientPortal() {
                         <div className="flex-1 bg-surface2 dark:bg-surface2-dark rounded-full h-2 overflow-hidden">
                           <div className="h-full rounded-full bg-status-green transition-all duration-500" style={{ width: `${tracking.progress_pct}%` }} />
                         </div>
-                        <span className="text-caption tabular-nums text-secondary dark:text-secondary-dark w-10 text-right">{tracking.progress_pct}%</span>
+                        <span className="text-caption tabular-nums text-secondary  w-10 text-right">{tracking.progress_pct}%</span>
                       </div>
-                      <p className="text-caption text-tertiary dark:text-tertiary-dark">
+                      <p className="text-caption text-tertiary ">
                         {tracking.ambulance_vehicle_id || "Ambulance"} is on the way
                       </p>
                     </div>
@@ -328,8 +445,8 @@ export default function PatientPortal() {
                   <div key={e.id} className="card">
                     <div className="flex justify-between items-start">
                       <div>
-                        <p className="text-body font-medium text-primary dark:text-primary-dark">{e.patient_name}</p>
-                        <p className="text-caption text-tertiary dark:text-tertiary-dark mt-1">{e.description}</p>
+                        <p className="text-body font-medium text-primary ">{e.patient_name}</p>
+                        <p className="text-caption text-tertiary  mt-1">{e.description}</p>
                       </div>
                       <span className={`micro-tag ${
                         e.severity === "critical" ? "micro-tag-critical" :
@@ -348,7 +465,7 @@ export default function PatientPortal() {
         {(["report", "track"] as const).map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={`flex-1 flex flex-col items-center justify-center gap-0.5 text-caption transition-colors duration-150 ${
-              tab === t ? "text-accent dark:text-primary-dark" : "text-tertiary dark:text-tertiary-dark"
+              tab === t ? "text-accent " : "text-tertiary "
             }`}>
             {t === "report" ? (
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">

@@ -4,6 +4,24 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --text-primary: #1A1917;
+  --text-secondary: #6B6966;
+  --text-tertiary: #9E9B97;
+  --text-accent: #1A1917;
+}
+.dark {
+  --text-primary: #F0F1F3;
+  --text-secondary: #9EA3B5;
+  --text-tertiary: #5C6278;
+  --text-accent: #F0F1F3;
+}
+
+.text-primary { color: var(--text-primary); }
+.text-secondary { color: var(--text-secondary); }
+.text-tertiary { color: var(--text-tertiary); }
+.text-accent { color: var(--text-accent); }
+
 @layer base {
   html {
     font-family: 'Inter', system-ui, sans-serif;
@@ -12,7 +30,7 @@
   }
 
   body {
-    @apply bg-page text-body text-primary dark:bg-[#0F1117] dark:text-[#F0F1F3];
+    @apply bg-page text-body text-primary dark:bg-[#0F1117];
   }
 
   :focus-visible {

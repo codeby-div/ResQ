@@ -1,13 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { useNavigate } from "react-router-dom"
 import { useAuth } from "../context/AuthContext"
-import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet"
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet"
 import L from "leaflet"
 import "leaflet/dist/leaflet.css"
 import { fetchHospitals, fetchAmbulances, fetchEmergencies, updateEmergency } from "../services/api"
+import ResQLogo from "../components/ui/ResQLogo"
 import { demoHospitals, demoAmbulances } from "../services/demoData"
 import { subscribeAllEmergencies, unsubscribeAllEmergencies } from "../services/socket"
-import { onEmergencyUpdate } from "../services/notifications"
+import { onEmergencyUpdate, onAmbulanceUpdate } from "../services/notifications"
 import type { Hospital, Ambulance, Emergency } from "../types"
 import AlertItem from "../components/ui/AlertItem"
 import ConfirmationModal from "../components/ui/ConfirmationModal"
@@ -48,6 +49,16 @@ const ambulanceIcon = L.divIcon({
   className: "", iconSize: [26, 26], iconAnchor: [13, 13],
 })
 
+function FitBounds({ markers }: { markers: [number, number][] }) {
+  const map = useMap()
+  useEffect(() => {
+    if (markers.length === 0) return
+    const bounds = L.latLngBounds(markers)
+    if (bounds.isValid()) map.fitBounds(bounds, { padding: [50, 50], maxZoom: 12 })
+  }, [markers, map])
+  return null
+}
+
 const relTime = (iso: string) => {
   const d = Date.now() - new Date(iso).getTime(); const m = Math.floor(d / 60000)
   if (m < 1) return "just now"; if (m < 60) return `${m}m ago`; return `${Math.floor(m / 60)}h ago`
@@ -75,17 +86,34 @@ export default function AdminPortal() {
     } catch { setHospitals(demoHospitals); setAmbulances(demoAmbulances) }
   }, [])
 
-  useEffect(() => { load(); const i = setInterval(load, 8000); return () => clearInterval(i) }, [load])
+  // Initial data load
+  useEffect(() => { load() }, [load])
 
-  // WebSocket: real-time emergency updates
+  // WebSocket: real-time emergency + ambulance updates (no queued dispatch recv on admin room)
+  const emergenciesRef = useRef(emergencies)
+  emergenciesRef.current = emergencies
   useEffect(() => {
     subscribeAllEmergencies()
-    const cleanup = onEmergencyUpdate(() => { load() })
+    const cleanupEm = onEmergencyUpdate((data: any) => {
+      const idx = emergenciesRef.current.findIndex((e: Emergency) => e.id === data.emergency_id)
+      if (idx >= 0) {
+        setEmergencies(prev => prev.map(e => e.id === data.emergency_id ? { ...e, ...data } : e))
+      } else {
+        load() // new emergency, pull full data
+      }
+    })
+    const cleanupAmb = onAmbulanceUpdate((_data: any) => {
+      load() // refresh all on ambulance dispatch
+    })
     return () => {
-      cleanup()
+      cleanupEm()
+      cleanupAmb()
       unsubscribeAllEmergencies()
     }
   }, [load])
+
+  // Background fallback poll (30s) for ambulance/hospital position changes
+  useEffect(() => { const i = setInterval(load, 30000); return () => clearInterval(i) }, [load])
 
   const filtered = emergencies.filter(e => e.patient_name.toLowerCase().includes(search.toLowerCase()))
   const pending = emergencies.filter(e => e.status === "pending").length
@@ -98,13 +126,13 @@ export default function AdminPortal() {
       <nav className="flex-1 py-4 overflow-y-auto">
         {nav.map(s => (
           <div key={s.label} className="mb-5">
-            <p className="px-4 mb-2 text-section-label text-tertiary dark:text-tertiary-dark">{s.label}</p>
+            <p className="px-4 mb-2 text-section-label text-tertiary ">{s.label}</p>
             {s.items.map(item => (
               <button key={item.key} onClick={() => { setView(item.key); setSidebarOpen(false) }}
                 className={`w-full flex items-center gap-3 px-4 py-2 text-body transition-colors duration-100 ${
                   view === item.key
-                    ? "border-l-2 border-accent dark:border-primary-dark text-primary dark:text-primary-dark font-medium"
-                    : "border-l-2 border-transparent text-tertiary dark:text-tertiary-dark hover:bg-surface dark:hover:bg-surface-dark hover:text-primary dark:hover:text-primary-dark"
+                    ? "border-l-2 border-accent dark:border-primary-dark text-primary  font-medium"
+                    : "border-l-2 border-transparent text-tertiary  hover:bg-surface dark:hover:bg-surface-dark hover:text-primary dark:hover:text-primary-dark"
                 }`}>
                 <span className="flex-1 text-left">{item.label}</span>
                 {item.count ? <span className="text-caption text-tertiary">{item.count}</span> : null}
@@ -118,8 +146,8 @@ export default function AdminPortal() {
           {user?.display_name?.charAt(0)?.toUpperCase() || "A"}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-caption font-medium text-primary dark:text-primary-dark truncate">{user?.display_name || "Admin"}</p>
-          <p className="text-caption text-tertiary dark:text-tertiary-dark truncate">{user?.role || "System Administrator"}</p>
+          <p className="text-caption font-medium text-primary  truncate">{user?.display_name || "Admin"}</p>
+          <p className="text-caption text-tertiary  truncate">{user?.role || "System Administrator"}</p>
         </div>
         <button onClick={() => { logout(); navigate("/") }} className="text-tertiary hover:text-primary transition-colors p-1" title="Logout">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
@@ -131,14 +159,23 @@ export default function AdminPortal() {
   return (
     <div className="h-screen flex flex-col bg-page dark:bg-[#0F1117]">
       <header className="h-[52px] bg-white dark:bg-surface-dark border-b border-border dark:border-border-dark flex items-center justify-between px-4 shrink-0">
-        <div className="flex items-center gap-3">
-          <button onClick={() => navigate("/")} className="text-secondary hover:text-primary transition-colors text-sm mr-1" title="Back to role selection">&larr;</button>
-          <button onClick={() => setSidebarOpen(!sidebarOpen)} className="lg:hidden text-secondary dark:text-secondary-dark" aria-label="Toggle sidebar">
+        <div className="flex items-center gap-4">
+          <button onClick={() => navigate("/")}
+            className="flex items-center justify-center w-9 h-9 rounded-lg text-secondary hover:text-primary hover:bg-surface2 dark:hover:bg-surface2-dark transition-colors"
+            aria-label="Back to role selection"
+            title="Back to role selection">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M19 12H5M12 19l-7-7 7-7"/>
+            </svg>
+          </button>
+          <button onClick={() => setSidebarOpen(!sidebarOpen)} className="lg:hidden text-secondary" aria-label="Toggle sidebar">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" /></svg>
           </button>
-          <span className="text-[18px] font-medium text-status-red">+</span>
-          <span className="text-[15px] font-medium text-primary dark:text-primary-dark">ResQ</span>
-          <span className="hidden sm:block text-caption text-tertiary dark:text-tertiary-dark ml-2">/ Admin</span>
+          <div className="flex items-center gap-2">
+            <ResQLogo size={22} />
+            <span className="text-[15px] font-medium text-primary">ResQ</span>
+          </div>
+          <span className="hidden sm:block text-caption text-tertiary ml-2">/ Admin</span>
         </div>
         <div className="flex items-center gap-4">
           <div className="hidden md:flex items-center gap-2">
@@ -208,7 +245,7 @@ export default function AdminPortal() {
 function OverviewView({ emergencies, hospitals, ambulances, pending, critical, availAmb, totalBeds, filtered, search, setSearch, relTime, setReassignTarget }: any) {
   return (
     <div className="max-w-7xl mx-auto space-y-6">
-      <h1 className="text-page-title text-primary dark:text-primary-dark">Command Dashboard</h1>
+      <h1 className="text-page-title text-primary ">Command Dashboard</h1>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
@@ -294,7 +331,7 @@ function OverviewView({ emergencies, hospitals, ambulances, pending, critical, a
         <div className="space-y-4">
           <div className="card p-0">
             <div className="flex items-center justify-between p-4 border-b border-border dark:border-border-dark">
-              <span className="text-section-label text-tertiary dark:text-tertiary-dark">Alerts feed</span>
+              <span className="text-section-label text-tertiary ">Alerts feed</span>
               <button className="text-caption text-tertiary hover:text-primary transition-colors">Mark all read</button>
             </div>
             <div className="divide-y divide-border dark:divide-border-dark max-h-[380px] overflow-y-auto">
@@ -348,11 +385,17 @@ function OverviewView({ emergencies, hospitals, ambulances, pending, critical, a
 function LiveMapView({ hospitals, ambulances, emergencies }: any) {
   const dispatched = emergencies.find((e: Emergency) => e.assigned_ambulance_id && e.status === "dispatched")
   const amb = dispatched ? ambulances.find((a: Ambulance) => a.id === dispatched.assigned_ambulance_id) : null
+  const allPositions: [number, number][] = [
+    ...hospitals.map((h: Hospital) => [h.latitude, h.longitude] as [number, number]),
+    ...ambulances.map((a: Ambulance) => [a.latitude, a.longitude] as [number, number]),
+    ...emergencies.filter((e: Emergency) => e.status !== "resolved").map((e: Emergency) => [e.latitude, e.longitude] as [number, number]),
+  ]
   return (
     <div className="h-full flex">
       <div className="flex-1 relative rounded-card overflow-hidden border border-border">
         <MapContainer center={[20.5937, 78.9629]} zoom={5} className="h-full w-full" style={{ height: "100%", width: "100%" }}>
-          <TileLayer attribution='&copy; OpenStreetMap' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+          <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+          <FitBounds markers={allPositions} />
           {hospitals.map((h: Hospital) => <Marker key={`h-${h.id}`} position={[h.latitude, h.longitude]} icon={hospitalIcon}><Popup><div className="text-sm"><strong>{h.name}</strong><br />Beds: {h.available_beds}/{h.total_beds}</div></Popup></Marker>)}
           {ambulances.map((a: Ambulance) => <Marker key={`a-${a.id}`} position={[a.latitude, a.longitude]} icon={ambulanceIcon}><Popup><div className="text-sm"><strong>{a.vehicle_id}</strong><br />{a.status}</div></Popup></Marker>)}
           {emergencies.filter((e: Emergency) => e.status !== "resolved").map((e: Emergency) => (
@@ -537,19 +580,22 @@ function ForecastView(_: any) {
 function HotspotsView({ emergencies }: any) {
   const [range, setRange] = useState("7days")
   const mapRef = useRef<HTMLDivElement>(null)
-  const [map, setMap] = useState<any>(null)
+  const mapInstance = useRef<L.Map | null>(null)
+  const layerGroup = useRef<L.LayerGroup | null>(null)
 
   useEffect(() => {
-    if (mapRef.current && !map) {
+    if (mapRef.current && !mapInstance.current) {
       const m = L.map(mapRef.current).setView([20.5937, 78.9629], 5)
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18 }).addTo(m)
-      setMap(m)
+      layerGroup.current = L.layerGroup().addTo(m)
+      mapInstance.current = m
     }
-    return () => { if (map) map.remove() }
+    return () => { if (mapInstance.current) { mapInstance.current.remove(); mapInstance.current = null } }
   }, [])
 
   useEffect(() => {
-    if (!map) return
+    if (!layerGroup.current) return
+    layerGroup.current.clearLayers()
     const groups: Record<string, { lat: number; lng: number; count: number }> = {}
     emergencies.forEach((e: Emergency) => {
       const key = `${Math.round(e.latitude * 10)},${Math.round(e.longitude * 10)}`
@@ -561,9 +607,9 @@ function HotspotsView({ emergencies }: any) {
       const color = g.count >= 2 ? "#C0392B" : g.count === 1 ? "#B7660A" : "#2D7A45"
       L.circleMarker([g.lat, g.lng], {
         radius, color: "#fff", weight: 2, fillColor: color, fillOpacity: 0.6,
-      }).addTo(map).bindPopup(`<b>${g.count} emergency(ies)</b>`)
+      }).addTo(layerGroup.current!).bindPopup(`<b>${g.count} emergency(ies)</b>`)
     })
-  }, [map, emergencies])
+  }, [emergencies])
 
   return (
     <div className="max-w-6xl mx-auto space-y-4">

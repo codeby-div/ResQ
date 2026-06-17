@@ -82,6 +82,8 @@ export interface TrackingInfo {
   ambulance_lat: number | null
   ambulance_lng: number | null
   ambulance_vehicle_id: string | null
+  driver_name?: string
+  driver_phone?: string
   status: "pending" | "dispatched" | "resolved"
   eta_seconds: number | null
   progress_pct: number

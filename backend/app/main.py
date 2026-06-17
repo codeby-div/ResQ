@@ -9,7 +9,16 @@ from .services.socket_manager import sio
 from .routers.socket_events import register_socket_handlers
 
 Base.metadata.create_all(bind=engine)
+from .database import SessionLocal
+from .models import User
+from .auth import hash_password
 
+db = SessionLocal()
+if not db.query(User).first():
+    db.add(User(username="admin", hashed_password=hash_password("admin123"), role="admin", display_name="Admin"))
+    db.commit()
+    logging.info("Created default admin: admin / admin123")
+db.close()
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="ResQ - Emergency Resource Allocator")

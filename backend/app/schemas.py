@@ -39,6 +39,8 @@ class AmbulanceBase(BaseModel):
     longitude: float
     status: AmbulanceStatus = AmbulanceStatus.AVAILABLE
     hospital_id: Optional[int] = None
+    driver_name: Optional[str] = None
+    driver_phone: Optional[str] = None
 
 
 class AmbulanceCreate(AmbulanceBase):
@@ -56,6 +58,8 @@ class AmbulanceUpdate(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     status: Optional[AmbulanceStatus] = None
+    driver_name: Optional[str] = None
+    driver_phone: Optional[str] = None
 
 
 class EmergencyBase(BaseModel):
@@ -116,6 +120,8 @@ class TrackingResponse(BaseModel):
     ambulance_lat: Optional[float] = None
     ambulance_lng: Optional[float] = None
     ambulance_vehicle_id: Optional[str] = None
+    driver_name: Optional[str] = None
+    driver_phone: Optional[str] = None
     status: str
     eta_seconds: Optional[int] = None
     progress_pct: float = 0
