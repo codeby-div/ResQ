@@ -1,0 +1,120 @@
+name: ResQ CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Backend: lint + test ────────────────────────────────────────────────────
+  backend:
+    name: Backend — lint & test
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: backend   # adjust to your actual folder name
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest pytest-cov httpx
+
+      - name: Lint — check for syntax errors
+        run: python -m py_compile $(find app -name "*.py" | tr '\n' ' ')
+
+      - name: Run tests with coverage
+        env:
+          SECRET_KEY: "ci-test-secret-key-not-for-production"
+          ALGORITHM: "HS256"
+          ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+          # SQLite used in tests; no Postgres needed
+        run: |
+          pytest tests/ \
+            --cov=app \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --cov-fail-under=70
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.xml
+
+  # ── Frontend: lint + build ──────────────────────────────────────────────────
+  frontend:
+    name: Frontend — lint & build
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend  # adjust to your actual folder name
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript type-check
+        run: npm run tsc --noEmit 2>/dev/null || npx tsc --noEmit
+
+      - name: Build
+        env:
+          VITE_API_BASE_URL: http://localhost:8000/api/v1
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+
+  # ── Deploy (only on push to main) ──────────────────────────────────────────
+  deploy:
+    name: Deploy to production
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Deploy backend to Render ──────────────────────────────────────────
+      # Set RENDER_DEPLOY_HOOK_BACKEND in your repo secrets.
+      # Get it from: Render dashboard → your backend service → Settings → Deploy hook
+      - name: Trigger Render backend deploy
+        if: env.RENDER_DEPLOY_HOOK_BACKEND != ''
+        env:
+          RENDER_DEPLOY_HOOK_BACKEND: ${{ secrets.RENDER_DEPLOY_HOOK_BACKEND }}
+        run: curl -X POST "$RENDER_DEPLOY_HOOK_BACKEND"
+
+      # ── Deploy frontend to Vercel ─────────────────────────────────────────
+      # Set VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID in repo secrets.
+      - name: Deploy frontend to Vercel
+        if: env.VERCEL_TOKEN != ''
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          npm install -g vercel
+          vercel pull --yes --environment=production --token=$VERCEL_TOKEN
+          vercel build --prod --token=$VERCEL_TOKEN
+          vercel deploy --prebuilt --prod --token=$VERCEL_TOKEN

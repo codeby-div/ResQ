@@ -1,0 +1,69 @@
+version: "3.9"
+
+# ── ResQ — full-stack docker-compose ────────────────────────────────────────
+# Quick start:
+#   cp .env.example .env       # fill in your values
+#   docker compose up --build  # first run; subsequent: docker compose up
+#
+# Ports exposed on the host:
+#   http://localhost       → React frontend (nginx)
+#   http://localhost:8000  → FastAPI backend (direct, useful for /docs)
+#   localhost:5432         → PostgreSQL (for local DB tools)
+
+services:
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: resq_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-resq}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-resq}
+      POSTGRES_DB: ${POSTGRES_DB:-resq_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - resq_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-resq}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── FastAPI backend ────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend          # adjust to your actual folder name
+      dockerfile: ../Dockerfile.backend
+    container_name: resq_backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db           # overrides whatever is in .env
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      # Hot-reload in development: mount source over the image copy.
+      # Remove this volume in production to use the baked-in code.
+      - ./backend:/app
+
+  # ── React frontend ─────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend          # adjust to your actual folder name
+      dockerfile: ../Dockerfile.frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000/api/v1}
+    container_name: resq_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+
+volumes:
+  resq_postgres_data:

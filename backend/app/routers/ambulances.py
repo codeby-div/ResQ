@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from ..database import get_db
 from ..models import Ambulance, Emergency
@@ -23,6 +24,9 @@ def get_ambulance(ambulance_id: int, db: Session = Depends(get_db)):
 
 @router.post("", response_model=AmbulanceResponse, status_code=201)
 def create_ambulance(data: AmbulanceCreate, db: Session = Depends(get_db)):
+    existing = db.query(Ambulance).filter(Ambulance.vehicle_id == data.vehicle_id).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Ambulance with this vehicle ID already exists")
     ambulance = Ambulance(**data.model_dump())
     db.add(ambulance)
     db.commit()
