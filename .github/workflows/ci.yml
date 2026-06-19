@@ -92,6 +92,58 @@ jobs:
           name: frontend-dist
           path: frontend/dist/
 
+  # ── E2E tests: Playwright against Docker Compose ──────────────────────────
+  e2e:
+    name: E2E — Playwright
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/master'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create .env for Docker
+        run: |
+          echo "SECRET_KEY=ci-test-secret" > .env
+          echo "ALGORITHM=HS256" >> .env
+          echo "ACCESS_TOKEN_EXPIRE_MINUTES=60" >> .env
+          echo "VITE_API_URL=http://localhost:8000" >> .env
+          echo "VITE_SOCKET_URL=http://localhost:8000" >> .env
+
+      - name: Start Docker Compose
+        run: docker compose up -d --wait
+
+      - name: Wait for backend health
+        run: |
+          for i in $(seq 1 30); do
+            curl -s http://localhost:8000/health && break
+            sleep 2
+          done
+
+      - name: Seed test data
+        run: docker compose exec -T backend python seed.py
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium
+        working-directory: frontend
+
+      - name: Run E2E tests
+        env:
+          BASE_URL: http://localhost
+          API_URL: http://localhost:8000
+        run: npx playwright test
+        working-directory: frontend
+
+      - name: Upload E2E artifacts
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+
+      - name: Stop Docker Compose
+        if: always()
+        run: docker compose down -v
+
   # ── Docker: build + push images ───────────────────────────────────────────
   docker:
     name: Docker — build & push
