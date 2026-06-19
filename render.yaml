@@ -1,14 +1,12 @@
 services:
   - type: web
     name: resq-backend
-    runtime: python
+    runtime: docker
     repo: https://github.com/codeby-div/ResQ
     branch: master
     plan: free
     region: oregon
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: alembic upgrade head && python -m scripts.create_admin && uvicorn app.main:socket_app --host 0.0.0.0 --port $PORT
+    dockerfilePath: Dockerfile.backend
     healthCheckPath: /health
     envVars:
       - key: SECRET_KEY
