@@ -1,0 +1,26 @@
+ResQ — Project Progress
+========================
+
+Overall: ~90%
+
+CI/CD Pipeline (Completed 2026-06-19)
+-------------------------------------
+✅ Backend: lint + pytest (28 tests, 77% coverage, threshold 70%)
+✅ Frontend: ESLint + tsc type-check + Vite build
+✅ Docker: multi-stage builds for backend (Python 3.12) + frontend (nginx)
+✅ Docker Compose: PostgreSQL + backend + frontend
+✅ CI workflow: .github/workflows/ci.yml — 4 job pipeline
+  - backend job (lint + test + coverage artifact)
+  - frontend job (lint + typecheck + build + dist artifact)
+  - docker job (build + push to ghcr.io on main)
+  - deploy job (Render deploy hook + Vercel deploy on main)
+✅ Deployment configs: render.yaml (backend) + vercel.json (frontend)
+✅ Alembic migrations: 0001_initial_schema.py
+✅ Tests: unit tests (auth, hospitals, ambulances) + integration (emergency lifecycle)
+
+Remaining
+---------
+⬜ Configure GitHub secrets: RENDER_DEPLOY_HOOK_BACKEND, VERCEL_TOKEN, etc.
+⬜ Set up Twilio SMS / SMTP email / FCM push in production
+⬜ E2E tests with Playwright
+⬜ Fix 68 pre-existing frontend ESLint warnings (inline components, any types)

@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: resq-backend
+    runtime: python
+    repo: https://github.com/codeby-div/ResQ
+    branch: master
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: alembic upgrade head && uvicorn app.main:socket_app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "720"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: resq-db
+          property: connectionString
+      - key: VITE_API_URL
+        value: https://resq-backend.onrender.com
+      - key: VITE_SOCKET_URL
+        value: https://resq-backend.onrender.com
+
+databases:
+  - name: resq-db
+    plan: free
+    region: oregon
+    databaseName: resq
+    user: resq

@@ -1,9 +1,6 @@
 # ResQ — Project Status
 
 ## Overall Progress: **~85%**
-
----
-
 ## ✅ Fully Built
 
 ### Frontend (React + Vite + TypeScript + TailwindCSS)
@@ -49,23 +46,29 @@
 
 | Feature | Status | Details |
 |---------|--------|---------|
-| **Tests** | ❌ Not started | No test files found (unit, integration, or e2e) |
-| **Docker** | ❌ Not started | No Dockerfile or docker-compose.yml |
-| **CI/CD** | ❌ Not started | No GitHub Actions or other pipeline |
-| **Database Migrations** | ⚠️ Alembic in deps, not configured | `alembic` in requirements.txt but no `migrations/` directory |
 | **Phone/Email fields** | ⚠️ Backend model has them, PatientPortal form includes them | `phone` field validated as 10-digit, `email` optional |
 | **Push notifications** | ⚠️ Backend service has FCM code (mocked), frontend has push token field | Not wired up end-to-end |
 | **Offline support** | ⚠️ Service worker exists, OfflineBanner component exists | Not deeply tested |
+| **Deployment secrets** | ⚠️ Needs env vars configured | RENDER_DEPLOY_HOOK_BACKEND, VERCEL_TOKEN, etc. |
 | **Admin auth** | ✅ Login form exists, AuthContext works | Default admin: `admin` / `admin123` |
-| **Production build** | ✅ tsc + vite build configured | Not verified in production deployment |
+| **Production build** | ✅ Verified | `npm run build` succeeds, Vite + tsc clean |
+
+---
+
+## ✅ CI/CD Pipeline
+
+| Stage | What it does |
+|-------|-------------|
+| **Backend** | Python syntax lint + pytest with 70% coverage minimum |
+| **Frontend** | ESLint + tsc type-check + Vite production build |
+| **Docker** | Build & push backend + frontend images to GHCR (on main) |
+| **Deploy** | Trigger Render deploy hook + deploy frontend to Vercel (on main) |
 
 ---
 
 ## 🧭 Recommended Next Steps
 
-1. **Add tests** — pytest for backend (fastapi.TestClient), vitest/playwright for frontend
-2. **Dockerize** — Dockerfile for frontend (nginx) + backend (uvicorn) + docker-compose with PostgreSQL
-3. **Configure production services** — Twilio SMS, SMTP email, FCM push via environment variables
-4. **Database migrations** — Initialize Alembic and create migration scripts
-5. **CI/CD pipeline** — GitHub Actions for lint → test → build → deploy
-6. **End-to-end testing** — Playwright for critical flows (report → dispatch → track)
+1. **Configure production secrets** — Add `RENDER_DEPLOY_HOOK_BACKEND`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` to GitHub repo secrets
+2. **Configure deployment services** — Set up Twilio SMS, SMTP email, FCM push via environment variables in Render/Vercel dashboards
+3. **E2E testing** — Playwright for critical flows (report → dispatch → track)
+4. **Fix pre-existing frontend lint warnings** — 68 eslint issues (inline components, `any` types, setState in effects)
